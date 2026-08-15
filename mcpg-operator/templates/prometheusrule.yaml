@@ -1,0 +1,139 @@
+{{- if .Values.prometheusRule.enabled }}
+# Default alerting rules for the MCPG operator. Tuned for the
+# metric surface defined in `crates/mcpg-operator/src/telemetry.rs`.
+# Operators can override every threshold via values.yaml; the
+# defaults are intentionally conservative so a noisy alert is a
+# real signal, not a tuning artefact.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "mcpg-operator.fullname" . }}
+  namespace: {{ default (include "mcpg-operator.namespace" .) .Values.prometheusRule.namespace }}
+  labels:
+    {{- include "mcpg-operator.labels" . | nindent 4 }}
+    {{- with .Values.prometheusRule.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+    - name: mcpg-operator.rules
+      interval: {{ .Values.prometheusRule.interval }}
+      rules:
+
+        # ── Reconcile-loop liveness ──────────────────────────────
+        - alert: MCPGOperatorReconcileStale
+          expr: |
+            (time() - max by (controller) (mcpg_operator_last_reconcile_timestamp_seconds))
+              > {{ .Values.prometheusRule.thresholds.reconcileStaleSeconds }}
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "MCPG operator controller has not reconciled recently"
+            description: |
+              Controller {{ "{{" }} $labels.controller {{ "}}" }} has not reconciled
+              in over {{ .Values.prometheusRule.thresholds.reconcileStaleSeconds }}
+              seconds. Either the operator pod is unhealthy, the leader-election
+              lease is stuck, or the apiserver is rejecting writes.
+
+        # ── Reconcile-error rate ─────────────────────────────────
+        - alert: MCPGOperatorReconcileErrorsHigh
+          expr: |
+            sum by (controller) (
+              rate(mcpg_operator_reconcile_total{outcome="transient_error"}[5m])
+            )
+              > {{ .Values.prometheusRule.thresholds.reconcileErrorRatePerSec }}
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "MCPG operator reconcile error rate elevated"
+            description: |
+              Controller {{ "{{" }} $labels.controller {{ "}}" }} is hitting transient
+              errors at > {{ .Values.prometheusRule.thresholds.reconcileErrorRatePerSec }}
+              /sec sustained over 10m. Inspect operator logs.
+
+        - alert: MCPGOperatorReconcilePermanentError
+          expr: |
+            increase(mcpg_operator_reconcile_total{outcome="permanent_error"}[15m])
+              > 0
+          for: 1m
+          labels:
+            severity: warning
+          annotations:
+            summary: "MCPG operator hit a permanent reconcile error"
+            description: |
+              A `permanent_error` outcome means a CRD is mis-shaped (missing
+              namespace / missing name) — operator intervention required to
+              edit the CR. Controller: {{ "{{" }} $labels.controller {{ "}}" }}.
+
+        # ── Reconcile latency ────────────────────────────────────
+        - alert: MCPGOperatorReconcileSlow
+          expr: |
+            histogram_quantile(0.95,
+              sum by (le, controller)
+                (rate(mcpg_operator_reconcile_duration_seconds_bucket[10m]))
+            ) > {{ .Values.prometheusRule.thresholds.reconcileP95Seconds }}
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "MCPG operator p95 reconcile latency high"
+            description: |
+              p95 reconcile time exceeds {{ .Values.prometheusRule.thresholds.reconcileP95Seconds }}s.
+              Likely cause: slow apiserver, OCI pulls inside reconcile, or kube
+              client throttling.
+
+        # ── Dependency-pending dwell ─────────────────────────────
+        - alert: MCPGOperatorDependencyPending
+          expr: |
+            sum by (controller, dependency) (
+              rate(mcpg_operator_dependency_unresolved_total[10m])
+            ) > 0
+            and on (controller, dependency) (
+              sum by (controller, dependency) (
+                rate(mcpg_operator_dependency_unresolved_total[10m]) -
+                rate(mcpg_operator_dependency_unresolved_total[10m] offset 30m)
+              ) >= 0
+            )
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: "MCPG operator dependency unresolved for over 30m"
+            description: |
+              Controller {{ "{{" }} $labels.controller {{ "}}" }} has been waiting
+              on {{ "{{" }} $labels.dependency {{ "}}" }} for over 30m. Likely cause:
+              upstream CRD wedged or referenced resource missing.
+
+        # ── OCI plugin pull failures ─────────────────────────────
+        - alert: MCPGOperatorPluginPullFailing
+          expr: |
+            sum (
+              rate(mcpg_operator_oci_pull_total{outcome="failed"}[15m])
+            )
+              > {{ .Values.prometheusRule.thresholds.ociPullErrorRatePerSec }}
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "MCPG operator OCI pull failures sustained"
+            description: |
+              Plugin OCI pulls failing > {{ .Values.prometheusRule.thresholds.ociPullErrorRatePerSec }}/sec
+              over 15m. Check registry reachability, pull-secret validity, and
+              MCPGPlugin status conditions.
+
+        # ── Leader-election ──────────────────────────────────────
+        - alert: MCPGOperatorNoLeader
+          expr: |
+            sum (mcpg_operator_leader_elected) == 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "No MCPG operator pod holds the lease"
+            description: |
+              No replica reports `mcpg_operator_leader_elected = 1` for over 5m.
+              Reconciles are halted. Check the lease (kubectl describe lease
+              -n mcpg-system), apiserver health, and the operator pod logs.
+{{- end }}

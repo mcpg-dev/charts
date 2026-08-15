@@ -1,0 +1,42 @@
+apiVersion: v2
+name: mcpg-control-plane
+description: |
+  MCPG Control Plane — operator UI + gateway-fleet orchestrator.
+  Pairs with mcpg (gateway) and mcpg-operator. Single chart deploys
+  the cp-server binary, exposes HTTP + gRPC, and optionally provisions
+  Postgres for multi-tenant RBAC + audit storage.
+type: application
+version: 0.1.0-beta.11
+appVersion: "1.0.0-dev.19"
+kubeVersion: ">=1.26.0-0"
+home: https://github.com/mcpg-dev/source-code
+sources:
+  - https://github.com/mcpg-dev/source-code
+maintainers:
+  - name: Andrii Tsok
+    email: andrii@tsok.org
+keywords:
+  - mcp
+  - gateway
+  - control-plane
+  - mcpg
+annotations:
+  artifacthub.io/license: Apache-2.0
+  artifacthub.io/category: ai-machine-learning
+dependencies:
+  # Optional: bundle Postgres for production use. Set
+  # `postgresql.enabled=true` in values.yaml. When disabled, fall
+  # back to SQLite (in-pod, ephemeral unless `persistence.enabled`).
+  #
+  # VENDORED UNPACKED at charts/postgresql/ (committed). The release is
+  # offline — helm-chart-deps.sh skips the network when the subchart is
+  # present, and the legacy `repository:` HTTP index below is sunset
+  # (charts.bitnami.com/bitnami serves an empty index now). Re-vendor with:
+  #   helm pull oci://registry-1.docker.io/bitnamicharts/postgresql \
+  #     --version 16.5.4 --untar --untardir helm/charts/mcpg-control-plane/charts
+  # (must stay UNPACKED — helm 3.20 `helm package` rejects .tgz subcharts).
+  - name: postgresql
+    version: "16.5.4"
+    repository: https://charts.bitnami.com/bitnami
+    condition: postgresql.enabled
+    alias: postgresql

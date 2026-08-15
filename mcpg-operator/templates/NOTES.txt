@@ -1,0 +1,49 @@
+MCPG operator installed: {{ include "mcpg-operator.fullname" . }} v{{ .Chart.Version }}
+Operator image: {{ include "mcpg-operator.image" . }}
+
+✓ Operator Deployment lives in namespace `{{ include "mcpg-operator.namespace" . }}`.
+{{- if .Values.crd.install }}
+✓ Custom Resource Definitions installed:
+    - mcpggateways.mcpg.dev (v1alpha1)
+{{- end }}
+{{- if .Values.webhook.enabled }}
+✓ Validating admission webhook: failurePolicy={{ .Values.webhook.failurePolicy }}.
+{{- if .Values.certManager.enabled }}
+✓ TLS managed by cert-manager (Issuer: {{ .Values.certManager.issuerRef.name }}).
+{{- else }}
+⚠️  TLS materials read from Secret `{{ .Values.tls.secretName }}` —
+    pre-provision the Secret OR set certManager.enabled=true.
+{{- end }}
+{{- end }}
+
+Next steps:
+
+  # Watch the operator come up.
+  kubectl rollout status -n {{ include "mcpg-operator.namespace" . }} deployment/{{ include "mcpg-operator.fullname" . }}
+
+  # Apply a sample MCPGGateway in your tenant namespace.
+  cat <<EOF | kubectl apply -f -
+  apiVersion: mcpg.dev/v1alpha1
+  kind: MCPGGateway
+  metadata:
+    name: example
+    namespace: default
+  spec:
+    image:
+      tag: v1.0.0-dev
+    replicas: 1
+    config:
+      gateway:
+        server:
+          bind_address: "0.0.0.0:8787"
+  EOF
+
+  # Verify reconcile.
+  kubectl get mcpggateway -A
+  kubectl describe mcpggateway example -n default
+
+Documentation:
+  - Quickstart:     docs/k8s-operator/DEPLOYMENT.md
+  - CRD reference:  docs/k8s-operator/CRD_REFERENCE.md
+  - Roadmap:        docs/k8s-operator/ROADMAP.md
+  - Operator API:   docs/k8s-operator/OPERATOR_API.md

@@ -1,0 +1,345 @@
+# =============================================================================
+# MCPG Control Plane — default values.
+# =============================================================================
+# See README.md for the full configuration reference. The defaults below
+# match the Tier-0 wedge profile (single replica, SQLite, no auth) so a
+# bare `helm install` puts a working CP into the cluster on a developer's
+# laptop. Production deployments should at minimum:
+#   - bump replicaCount + bind a Postgres URL,
+#   - turn on auth (auth.mode=oidc with a real issuer),
+#   - terminate TLS in front (or set `grpcTls=true`).
+# =============================================================================
+
+# OCI coordinates shared by every first-party image. Helm merges `global` into
+# subcharts, so an umbrella sets these once and this chart follows; the
+# defaults keep a standalone install self-contained. Third-party images (the
+# bundled PostgreSQL) carry their own upstream coordinates and are unaffected.
+#
+# The canonical values live in tools/release/oci-registry.json; see
+# docs/release/OCI-REGISTRY-CONFIGURATION.md for the channel model (the public
+# channel is this same block with `repositoryPrefix: mcpg-dev`).
+global:
+  image:
+    # Registry namespace + path the image NAME is joined onto. Empty
+    # publishes at host root.
+    repositoryPrefix: mcpg-dev/source-code
+    # Registry host every first-party image is pulled from. Left UNSET rather
+    # than defaulted here so bundled third-party subcharts that read this same
+    # key never see a value they should not act on; the `ghcr.io` default
+    # lives in the "mcpg-cp.image" helper, where only first-party images see
+    # it. Set it to repoint an air-gapped or mirrored install.
+    # registry: ghcr.io
+
+# -- Number of cp-server replicas. Multi-replica requires a shared
+# Postgres: the replica-shared secrets live in the database (cookie
+# signing key + CP CA in the `cluster_secrets` table, tenant payload
+# DEKs in `tenant_payload_keys`), and the background janitors
+# coordinate via `leader_leases`. SQLite has no shared store, so it is
+# single-replica only — the chart refuses to render replicaCount > 1
+# unless a Postgres source is configured (cp.dbUrl / postgresql.enabled
+# / externalDatabase.enabled, or cp.assumeExternalDbUrl for a DSN
+# delivered via extraEnv/extraEnvFrom).
+replicaCount: 1
+
+image:
+  # Image NAME only, joined onto `global.image.repositoryPrefix` below. A
+  # value containing a `/` is taken as an already-qualified repository and the
+  # prefix is not prepended, so the image can live outside the prefix layout.
+  repository: mcpg-control-plane-server
+  # Registry host. Absent (the default) inherits `global.image.registry`; set
+  # it to pin this chart alone, or to "" for a host-less reference.
+  # registry: ghcr.io
+  # Defaults to .Chart.AppVersion when empty.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+# Lets users rename the release without renaming the chart.
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+  automountServiceAccountToken: false
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: false
+  capabilities:
+    drop:
+      - ALL
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 1
+    memory: 1Gi
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# -----------------------------------------------------------------------------
+# CP server config (maps to ServerConfig fields).
+# -----------------------------------------------------------------------------
+cp:
+  # External base URL; used in enrollment URLs + OIDC redirect URI.
+  externalUrl: "http://localhost:7843"
+  # Database URL. Empty string ⇒ chart auto-derives:
+  #   - postgresql.enabled=true → postgres://... pointing at the
+  #     bundled subchart (or `externalDatabase` when set).
+  #   - otherwise, SQLite under /var/lib/mcpg-cp/state.db (use
+  #     `persistence.enabled=true` for durability).
+  dbUrl: ""
+
+  # Declares that a Postgres MCPG_CP_DB_URL is delivered out-of-band via
+  # extraEnv/extraEnvFrom (the managed pattern that keeps the DSN out of
+  # rendered manifests). The chart cannot inspect env-sourced DSNs at
+  # render time, so this flag is how such installs satisfy the
+  # replicaCount > 1 shared-database guard and get the RollingUpdate
+  # strategy. Never set it on a sqlite install.
+  assumeExternalDbUrl: false
+
+  # gRPC TLS for the gateway↔CP channel. The CP mints its own CA
+  # at first boot; agents fetch it via /v1/ca-cert.pem.
+  grpcTls: false
+  grpcMtls: false
+
+  jsonLogs: true
+  rustLog: "info"
+
+  # KubeProvider — when enabled, the CP watches MCPGGateway CRDs in
+  # the configured namespace (or all namespaces when empty) and
+  # surfaces them as Instances alongside self-registered ones.
+  # Requires the cp-server image to be built with the
+  # `kube-provider` feature.
+  kubeProvider:
+    enabled: false
+    # Empty ⇒ all namespaces. Set to a single namespace for
+    # per-tenant CPs. Lifts the `mcpg.dev/cp-workspace` and
+    # `mcpg.dev/cp-environment` annotations off the CRD to route
+    # gateways into the right CP tenancy.
+    namespace: ""
+
+# -----------------------------------------------------------------------------
+# Auth.
+# -----------------------------------------------------------------------------
+auth:
+  # one of: none | oidc | mock
+  mode: "none"
+  oidc:
+    issuer: ""
+    clientId: ""
+    # Source the client secret from a pre-existing Kubernetes Secret.
+    # When `existingSecret` is set the chart skips creating its own
+    # Secret and references the user-provided one.
+    existingSecret: ""
+    existingSecretKey: "client_secret"
+    # Inline secret (NOT recommended for prod; chart wraps it in
+    # a Secret resource). Leave empty when `existingSecret` is set.
+    clientSecret: ""
+
+# -----------------------------------------------------------------------------
+# Offline license (self-host enterprise).
+# -----------------------------------------------------------------------------
+# A paid self-host install drops in a license JWT issued offline by
+# `mcpg-license issue`, plus the issuer's Ed25519 public key
+# (`mcpg-license keygen --public-out`). The CP verifies the token against
+# the key at every boot and refuses to start on a malformed/expired/
+# tampered license (fail-closed). Rotation is restart-driven: update the
+# Secret and restart the Deployment. Leave everything empty for
+# OSS/community installs — the CP self-mints a Tier-0 community license.
+license:
+  # Name of an EXISTING Secret holding the license token. When set, the
+  # chart mounts it read-only at /etc/mcpg/license and sets
+  # MCPG_CP_LICENSE_FILE to the key below. A public key (pubkeyPem or
+  # pubkeySecretRef) is then required — the render fails without one.
+  secretRef: ""
+  # Key within that Secret that holds the token.
+  secretKey: "license.jwt"
+  # The license verification public key (Ed25519 SPKI PEM), inline...
+  pubkeyPem: ""
+  # ...or sourced from an existing Secret (takes precedence over
+  # pubkeyPem when both are set).
+  pubkeySecretRef: ""
+  pubkeySecretKey: "pubkey.pem"
+
+# -----------------------------------------------------------------------------
+# Service.
+# -----------------------------------------------------------------------------
+service:
+  type: ClusterIP
+  http:
+    port: 7843
+    targetPort: 7843
+  grpc:
+    port: 7844
+    targetPort: 7844
+  annotations: {}
+
+# -----------------------------------------------------------------------------
+# Ingress (HTTP only — gRPC needs its own ingress / gateway resource).
+# -----------------------------------------------------------------------------
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: cp.mcpg.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+# -----------------------------------------------------------------------------
+# Persistence — only used when SQLite is the backing store.
+# -----------------------------------------------------------------------------
+persistence:
+  enabled: false
+  storageClass: ""
+  accessModes:
+    - ReadWriteOnce
+  size: 1Gi
+
+# -----------------------------------------------------------------------------
+# Probes.
+# -----------------------------------------------------------------------------
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: http
+  initialDelaySeconds: 10
+  periodSeconds: 15
+readinessProbe:
+  httpGet:
+    path: /readyz
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 10
+
+# -----------------------------------------------------------------------------
+# PodDisruptionBudget — emitted only when replicaCount > 1 (a PDB on a
+# single replica blocks every node drain).
+# -----------------------------------------------------------------------------
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+# -----------------------------------------------------------------------------
+# Observability pack (prometheus-operator + Grafana sidecar). All three
+# are off by default: they require the monitoring CRDs / sidecar to be
+# installed, and the scraped `/metrics` endpoint to exist on the
+# cp-server build.
+# -----------------------------------------------------------------------------
+serviceMonitor:
+  # -- Create a ServiceMonitor scraping /metrics on the http port.
+  # Requires prometheus-operator CRDs.
+  enabled: false
+  namespace: ""
+  interval: 30s
+  scrapeTimeout: 10s
+  labels: {}
+
+# -- PrometheusRule shipping a default alert pack for the CP. Tune via
+# the nested `thresholds` map.
+prometheusRule:
+  enabled: false
+  namespace: ""
+  interval: 30s
+  labels: {}
+  thresholds:
+    # -- Alert when 5xx responses exceed this share of all HTTP
+    # requests (0.05 = 5%).
+    http5xxRatio: 0.05
+
+# -- ConfigMap shipping the Grafana dashboard JSON. When enabled the
+# chart writes a ConfigMap labelled `grafana_dashboard: "1"` so a
+# Grafana sidecar (kube-prometheus-stack default config) auto-discovers
+# and provisions it.
+grafanaDashboard:
+  enabled: false
+  namespace: ""
+  labels:
+    grafana_dashboard: "1"
+
+# -----------------------------------------------------------------------------
+# Postgres sub-chart (Bitnami). Off by default.
+# -----------------------------------------------------------------------------
+postgresql:
+  enabled: false
+  image:
+    # The docker.io/bitnami tags were purged in the Bitnami catalogue sunset
+    # (the vendored subchart's default 404s); bitnamilegacy keeps them,
+    # frozen. Point at your own mirror for anything long-lived.
+    repository: bitnamilegacy/postgresql
+  global:
+    security:
+      # The subchart's image-verification macro rejects any repository it
+      # does not recognise — bitnamilegacy included. Scoped under
+      # `postgresql.` so it reaches only the Bitnami macro.
+      allowInsecureImages: true
+  auth:
+    username: mcpg
+    database: mcpg_cp
+    # When unset, the chart generates a 32-byte random password and
+    # writes it to a Kubernetes Secret. Override for stable installs.
+    password: ""
+    existingSecret: ""
+  primary:
+    persistence:
+      enabled: true
+      size: 8Gi
+
+# When `postgresql.enabled=false` you can still point the CP at an
+# external Postgres by filling these in. `dbUrl` takes precedence.
+externalDatabase:
+  enabled: false
+  host: ""
+  port: 5432
+  username: mcpg
+  database: mcpg_cp
+  existingSecret: ""
+  existingSecretKey: "password"
+
+# Pass arbitrary extra env vars (advanced use; e.g. enabling
+# experimental ServerConfig fields not yet in the Helm surface).
+# On the Postgres path, deliver the DSN here (or via extraEnvFrom) — the
+# chart no longer emits MCPG_CP_DB_URL unless cp.dbUrl/postgresql/
+# externalDatabase/persistence is set, so an envFrom value is not shadowed.
+extraEnv: []
+extraEnvFrom: []
+
+# Extra volumes + mounts (advanced). On the Postgres path the sqlite `data`
+# PVC is not emitted; mount a PVC here for the signing-key dir ($HOME/.mcpg)
+# so per-pod key regeneration is avoided. Example:
+#   extraVolumes:
+#     - name: mcpg-home
+#       persistentVolumeClaim: { claimName: mcpg-cp-home }
+#   extraVolumeMounts:
+#     - name: mcpg-home
+#       mountPath: /home/mcpg/.mcpg
+extraVolumes: []
+extraVolumeMounts: []
+
+# Init containers (verbatim). The signing-key mount above is the motivating
+# case: storage without fsGroup support (hostPath-style provisioners) hands
+# the pod a root-owned directory, so a privileged chown init step is the
+# portable way to make it writable for runAsUser.
+initContainers: []
+
+terminationGracePeriodSeconds: 30

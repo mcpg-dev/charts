@@ -1,0 +1,33 @@
+{{- if and .Values.webhook.enabled .Values.certManager.enabled }}
+# Self-signed Issuer (chart-local). Operators with a cluster-wide
+# CA may override .Values.certManager.issuerRef to point elsewhere.
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: {{ include "mcpg-operator.fullname" . }}-selfsigned
+  namespace: {{ include "mcpg-operator.namespace" . }}
+  labels:
+    {{- include "mcpg-operator.labels" . | nindent 4 }}
+spec:
+  selfSigned: {}
+---
+# Certificate that backs the webhook Service's TLS. cert-manager
+# rotates per `renewBefore`; the operator pod's volume reload
+# picks up new bytes without a restart.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "mcpg-operator.webhookSecretName" . }}
+  namespace: {{ include "mcpg-operator.namespace" . }}
+  labels:
+    {{- include "mcpg-operator.labels" . | nindent 4 }}
+spec:
+  secretName: {{ include "mcpg-operator.webhookSecretName" . }}
+  duration: {{ .Values.certManager.duration }}
+  renewBefore: {{ .Values.certManager.renewBefore }}
+  issuerRef:
+    {{- toYaml .Values.certManager.issuerRef | nindent 4 }}
+  dnsNames:
+    - {{ include "mcpg-operator.webhookServiceName" . }}.{{ include "mcpg-operator.namespace" . }}.svc
+    - {{ include "mcpg-operator.webhookServiceName" . }}.{{ include "mcpg-operator.namespace" . }}.svc.cluster.local
+{{- end }}

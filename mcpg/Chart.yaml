@@ -1,0 +1,46 @@
+apiVersion: v2
+name: mcpg
+description: Model Context Protocol Gateway — production-grade MCP proxy with identity, policy, payments, and plugin extensibility.
+type: application
+version: 0.1.0-beta.11
+appVersion: "0.1.0"
+kubeVersion: ">=1.26.0-0"
+home: https://github.com/mcpg-dev/source-code
+sources:
+  - https://github.com/mcpg-dev/source-code
+maintainers:
+  - name: Andrii Tsok
+    email: andrii@tsok.org
+keywords:
+  - mcp
+  - gateway
+  - ai
+  - llm
+  - model-context-protocol
+  - proxy
+annotations:
+  artifacthub.io/license: AGPL-3.0-only
+  artifacthub.io/category: ai-machine-learning
+dependencies:
+  # Both subcharts are VENDORED UNPACKED under charts/ (committed) and the
+  # release resolves them offline — helm-chart-deps.sh skips the network when
+  # they're present, and they MUST stay unpacked (helm 3.20 `helm package`
+  # rejects .tgz subcharts). redis's legacy `repository:` is sunset (the
+  # charts.bitnami.com/bitnami HTTP index is empty now). Re-vendor:
+  #   helm pull oci://registry-1.docker.io/bitnamicharts/redis --version 20.11.3 \
+  #     --untar --untardir helm/charts/mcpg/charts
+  #   helm pull nats/nats --version 1.2.10 --untar --untardir helm/charts/mcpg/charts
+  # Optional: deploy NATS alongside mcpg for multi-instance state & delivery bus.
+  # Set nats.enabled=true in values to activate.
+  - name: nats
+    version: "1.2.10"
+    repository: https://nats-io.github.io/k8s/helm/charts/
+    condition: nats.enabled
+    alias: nats
+  # Optional: deploy Redis alongside mcpg for multi-instance state & delivery bus.
+  # Set redis.enabled=true in values to activate.
+  - name: redis
+    version: "20.11.3"
+    repository: https://charts.bitnami.com/bitnami
+    condition: redis.enabled
+    alias: redis

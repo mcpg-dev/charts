@@ -1,0 +1,41 @@
+{{- if .Values.webhook.enabled }}
+# Service that kube-apiserver dials for the validating /
+# mutating admission webhooks.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "mcpg-operator.webhookServiceName" . }}
+  namespace: {{ include "mcpg-operator.namespace" . }}
+  labels:
+    {{- include "mcpg-operator.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "mcpg-operator.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: https
+      port: {{ .Values.webhook.servicePort }}
+      targetPort: webhook
+      protocol: TCP
+{{- end }}
+{{- if .Values.metrics.enabled }}
+---
+# Headless metrics Service. Prometheus / OTel scrapers find pods
+# via the selector + the named `metrics` port.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "mcpg-operator.fullname" . }}-metrics
+  namespace: {{ include "mcpg-operator.namespace" . }}
+  labels:
+    {{- include "mcpg-operator.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "mcpg-operator.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: metrics
+      port: {{ .Values.metrics.port }}
+      targetPort: metrics
+      protocol: TCP
+{{- end }}

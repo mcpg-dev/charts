@@ -1,0 +1,293 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: mcpgplugins.mcpg.dev
+spec:
+  group: mcpg.dev
+  names:
+    categories: []
+    kind: MCPGPlugin
+    plural: mcpgplugins
+    shortNames:
+    - mcpgp
+    singular: mcpgplugin
+  scope: Cluster
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.pluginId
+      name: Plugin
+      type: string
+    - jsonPath: .spec.version
+      name: Version
+      type: string
+    - jsonPath: .spec.pluginClass
+      name: Class
+      type: string
+    - jsonPath: .status.conditions[?(@.type=='Verified')].status
+      name: Verified
+      type: string
+    - jsonPath: .status.revokedBySha
+      name: Revoked
+      type: boolean
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: Auto-generated derived type for MCPGPluginSpec via `CustomResource`
+        properties:
+          spec:
+            description: |-
+              Single OCI-published, signed plugin artefact + the trust
+              policy under which the operator verifies it.
+            properties:
+              oci:
+                description: OCI artefact reference + optional in-cluster mirror.
+                properties:
+                  image:
+                    description: |-
+                      Full OCI ref, e.g.
+                      `ghcr.io/mcpg-dev/source-code/plugins/identity-workload:1.2.3-linux-amd64`
+                      (tag) or `...@sha256:abcd...` (digest pin — recommended
+                      for production).
+                    type: string
+                  mirrorRef:
+                    description: |-
+                      Pull through an in-cluster mirror (a future
+                      `MCPGPluginMirror` resource). When set, the operator
+                      translates the upstream `image` URL through the mirror's
+                      pathPrefix.
+                    nullable: true
+                    properties:
+                      name:
+                        type: string
+                    required:
+                    - name
+                    type: object
+                  pullSecretRef:
+                    description: |-
+                      Optional pull-secret reference (in the operator's
+                      namespace).
+                    nullable: true
+                    properties:
+                      name:
+                        type: string
+                    required:
+                    - name
+                    type: object
+                required:
+                - image
+                type: object
+              pluginClass:
+                description: |-
+                  Plugin class — advisory routing hint. The operator
+                  re-checks this against the descriptor.
+                  Values follow `mcpg_plugin_protocol::PluginClass`.
+                  Examples: `identity_provider`, `policy_engine`,
+                  `credential_issuer`, `audit_sink`, `cluster`,
+                  `backend`, `transport`.
+                type: string
+              pluginId:
+                description: |-
+                  Plugin id matching the descriptor's id (e.g.
+                  `dev.mcpg.identity.workload`). Must equal the descriptor
+                  embedded in the OCI artefact; the operator verifies on
+                  pull.
+                type: string
+              trust:
+                description: |-
+                  Trust policy: signing key, cosign identity, SLSA
+                  provenance source. The operator must be able to verify
+                  every layer before mounting the plugin into a gateway pod.
+                properties:
+                  cosignIdentity:
+                    description: |-
+                      Cosign keyless identity. Operator verifies the OCI
+                      manifest's sigstore signature against this identity.
+                      Optional in v1alpha1 — operators with cosign trust
+                      configured here run an extra verification layer.
+                    nullable: true
+                    properties:
+                      certificateIdentityRegexp:
+                        description: |-
+                          Regex matching the OIDC subject baked into the cosign
+                          certificate. Example:
+                          `^https://github\.com/mcpg-dev/source-code/`.
+                        type: string
+                      oidcIssuer:
+                        description: |-
+                          OIDC issuer the cosign cert chains back to.
+                          Example: `https://token.actions.githubusercontent.com`.
+                        type: string
+                    required:
+                    - certificateIdentityRegexp
+                    - oidcIssuer
+                    type: object
+                  signingKeyRef:
+                    description: |-
+                      Ed25519 public key the operator verifies the cdylib's
+                      `mcpg-plugin sign` signature against. Mandatory in v1alpha1;
+                      signature verification is the baseline trust gate that
+                      every plugin must pass.
+                    properties:
+                      key:
+                        default: release.pub
+                        description: |-
+                          Secret key holding the Ed25519 public key bytes (raw
+                          32 bytes, base64-decoded by the operator at load time).
+                          Default: `release.pub`.
+                        type: string
+                      secretName:
+                        description: Secret name in the operator's namespace.
+                        type: string
+                    required:
+                    - secretName
+                    type: object
+                  slsaProvenance:
+                    description: |-
+                      SLSA L3 provenance verification. Optional in v1alpha1 —
+                      operators with SLSA-enforced supply chains gate on it.
+                    nullable: true
+                    properties:
+                      configMapName:
+                        description: |-
+                          Name of a ConfigMap (in the operator's namespace) holding
+                          the `*.intoto.jsonl` provenance file under
+                          `data.provenance.intoto.jsonl`.
+                        type: string
+                      sourceTag:
+                        description: 'Source tag the provenance must record. Example: `v1.2.3`.'
+                        type: string
+                      sourceUri:
+                        description: |-
+                          Source URI the provenance must be pinned to. Example:
+                          `github.com/mcpg-dev/source-code`.
+                        type: string
+                    required:
+                    - configMapName
+                    - sourceTag
+                    - sourceUri
+                    type: object
+                required:
+                - signingKeyRef
+                type: object
+              version:
+                description: |-
+                  Plugin version. Should match the OCI tag's semver
+                  component when the operator can extract it; admission
+                  rejects mismatches.
+                type: string
+            required:
+            - oci
+            - pluginClass
+            - pluginId
+            - trust
+            - version
+            type: object
+          status:
+            description: |-
+              Observed state for a `MCPGPlugin`. Boolean fields are
+              reported as `Option<bool>` so absent ⇒ "not yet evaluated"
+              vs. `Some(false)` ⇒ "evaluated, refused". Operators reading
+              status should treat absence as "not Ready" rather than
+              defaulting to `false`.
+            nullable: true
+            properties:
+              artefactSecretName:
+                description: |-
+                  Name of the operator-managed Secret holding the verified
+                  bytes (in the operator's namespace).
+                nullable: true
+                type: string
+              conditions:
+                items:
+                  description: |-
+                    One status condition. Serde shape matches K8s
+                    `metav1.Condition` exactly so generic tooling (kubectl,
+                    kustomize, Argo CD) interprets it correctly.
+                  properties:
+                    lastTransitionTime:
+                      description: RFC3339 timestamp of the most recent transition.
+                      format: date-time
+                      type: string
+                    message:
+                      description: Free-text human-readable detail. May be empty.
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        `metadata.generation` the controller had observed when
+                        it set this condition. Lets clients detect stale status.
+                      format: int64
+                      nullable: true
+                      type: integer
+                    reason:
+                      description: |-
+                        CamelCase enum the operator defines per controller.
+                        E.g. `AllReplicasAvailable`, `DependencyPending`,
+                        `SignatureMismatch`.
+                      type: string
+                    status:
+                      description: |-
+                        `"True"`, `"False"`, or `"Unknown"`. K8s convention is to
+                        keep this as a string (not a bool) so `Unknown` is
+                        representable.
+                      type: string
+                    type:
+                      description: |-
+                        `Ready`, `Reconciling`, `Available`, `Degraded`,
+                        `Progressing`, `Failed`, plus per-CRD types.
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              cosignVerified:
+                nullable: true
+                type: boolean
+              lastReconcileTime:
+                format: date-time
+                nullable: true
+                type: string
+              observedGeneration:
+                format: int64
+                nullable: true
+                type: integer
+              pulledAt:
+                format: date-time
+                nullable: true
+                type: string
+              resolvedDigest:
+                description: |-
+                  SHA-256 of the verified cdylib bytes (lower-case hex).
+                  Operators check this against the cluster
+                  `MCPGRevocationList`; revoked entries flip
+                  `revoked_by_sha = true`.
+                nullable: true
+                type: string
+              revokedBySha:
+                description: |-
+                  True when [`Self::resolved_digest`] matches an entry in
+                  the cluster `MCPGRevocationList`. The operator refuses
+                  to materialise the plugin into any
+                  `MCPGPluginSet` while this is true.
+                nullable: true
+                type: boolean
+              signatureValid:
+                nullable: true
+                type: boolean
+              slsaVerified:
+                nullable: true
+                type: boolean
+            type: object
+        required:
+        - spec
+        title: MCPGPlugin
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

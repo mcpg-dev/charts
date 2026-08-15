@@ -1,0 +1,219 @@
+{{- /* SQLite is a single-writer, pod-local store: two replicas mean two
+       divergent databases (and a contended RWO PVC), so refuse the render
+       outright rather than ship a broken topology. */}}
+{{- if and (gt (int .Values.replicaCount) 1) (not (include "mcpg-cp.sharedDb" .)) }}
+{{- fail "replicaCount > 1 requires a shared Postgres — set cp.dbUrl (postgres://…), postgresql.enabled, or externalDatabase.enabled; or set cp.assumeExternalDbUrl=true when the Postgres DSN is delivered via extraEnv/extraEnvFrom. SQLite is single-replica only." }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "mcpg-cp.fullname" . }}
+  labels:
+    {{- include "mcpg-cp.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  strategy:
+    {{- /* Postgres-backed replicas share sessions/PKI through the DB, so
+           surge upgrades are safe (and required for a zero-downtime roll).
+           The sqlite path must never run two writers against the same PVC,
+           hence Recreate. */}}
+    {{- if include "mcpg-cp.sharedDb" . }}
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+    {{- else }}
+    type: Recreate
+    {{- end }}
+  selector:
+    matchLabels:
+      {{- include "mcpg-cp.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "mcpg-cp.labels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "mcpg-cp.serviceAccountName" . }}
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- with .Values.initContainers }}
+      initContainers:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: cp-server
+          image: {{ include "mcpg-cp.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.http.targetPort }}
+              protocol: TCP
+            - name: grpc
+              containerPort: {{ .Values.service.grpc.targetPort }}
+              protocol: TCP
+          env:
+            - name: MCPG_CP_BIND_HTTP
+              value: "0.0.0.0:{{ .Values.service.http.targetPort }}"
+            - name: MCPG_CP_BIND_GRPC
+              value: "0.0.0.0:{{ .Values.service.grpc.targetPort }}"
+            {{- /* An empty externalUrl / auth.mode means the value is
+                   delivered via extraEnv/extraEnvFrom (umbrella/managed
+                   pattern) — a container `env` entry always beats `envFrom`,
+                   so emitting it here would shadow that delivery. */}}
+            {{- if .Values.cp.externalUrl }}
+            - name: MCPG_CP_EXTERNAL_URL
+              value: {{ .Values.cp.externalUrl | quote }}
+            {{- end }}
+            {{- /* The DSN references $(MCPG_CP_DB_PASSWORD) via dependent-env
+                   expansion, so the password must be declared BEFORE it. */}}
+            {{- if .Values.postgresql.enabled }}
+            - name: MCPG_CP_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ default (printf "%s-postgresql" .Release.Name) .Values.postgresql.auth.existingSecret }}
+                  key: password
+            {{- else if and .Values.externalDatabase.enabled .Values.externalDatabase.existingSecret }}
+            - name: MCPG_CP_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.externalDatabase.existingSecret }}
+                  key: {{ .Values.externalDatabase.existingSecretKey }}
+            {{- end }}
+            {{- if or .Values.cp.dbUrl .Values.postgresql.enabled .Values.externalDatabase.enabled .Values.persistence.enabled }}
+            {{- /* Emit only when a DB (or the sqlite-PVC self-host default) is
+                   configured by the chart. A container `env` entry always beats
+                   `envFrom`, so emitting this unconditionally would shadow a
+                   Postgres DSN delivered via `extraEnvFrom` with the sqlite
+                   fallback. When none of these is set the operator supplies
+                   MCPG_CP_DB_URL via extraEnv/extraEnvFrom (managed path). */}}
+            - name: MCPG_CP_DB_URL
+              value: {{ include "mcpg-cp.dbUrl" . | quote }}
+            {{- end }}
+            {{- if .Values.auth.mode }}
+            - name: MCPG_CP_AUTH_MODE
+              value: {{ .Values.auth.mode | quote }}
+            {{- end }}
+            {{- if .Values.cp.grpcTls }}
+            - name: MCPG_CP_GRPC_TLS
+              value: "true"
+            {{- end }}
+            {{- if .Values.cp.grpcMtls }}
+            - name: MCPG_CP_GRPC_MTLS
+              value: "true"
+            {{- end }}
+            {{- if .Values.cp.jsonLogs }}
+            - name: MCPG_CP_JSON_LOGS
+              value: "true"
+            {{- end }}
+            - name: RUST_LOG
+              value: {{ .Values.cp.rustLog | quote }}
+            {{- if .Values.cp.kubeProvider.enabled }}
+            - name: MCPG_CP_KUBE_PROVIDER
+              value: "true"
+            - name: MCPG_CP_KUBE_NAMESPACE
+              value: {{ .Values.cp.kubeProvider.namespace | quote }}
+            {{- end }}
+            {{- if eq .Values.auth.mode "oidc" }}
+            - name: MCPG_CP_OIDC_ISSUER
+              value: {{ .Values.auth.oidc.issuer | quote }}
+            - name: MCPG_CP_OIDC_CLIENT_ID
+              value: {{ .Values.auth.oidc.clientId | quote }}
+            {{- if or .Values.auth.oidc.existingSecret .Values.auth.oidc.clientSecret }}
+            - name: MCPG_CP_OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ default (printf "%s-oidc" (include "mcpg-cp.fullname" .)) .Values.auth.oidc.existingSecret }}
+                  key: {{ .Values.auth.oidc.existingSecretKey }}
+            {{- end }}
+            {{- end }}
+            {{- /* Offline license (self-host enterprise): secret-mounted
+                   token + its verification public key. The CP is
+                   fail-closed (a configured token without a key, or an
+                   invalid token, refuses boot), so refuse at render time
+                   when the pairing is incomplete. */}}
+            {{- if .Values.license.secretRef }}
+            {{- if not (or .Values.license.pubkeyPem .Values.license.pubkeySecretRef) }}
+            {{- fail "license.secretRef is set but no verification key is configured — set license.pubkeyPem or license.pubkeySecretRef" }}
+            {{- end }}
+            - name: MCPG_CP_LICENSE_FILE
+              value: {{ printf "/etc/mcpg/license/%s" .Values.license.secretKey | quote }}
+            {{- end }}
+            {{- if .Values.license.pubkeySecretRef }}
+            - name: MCPG_CP_LICENSE_PUBKEY_PEM
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.license.pubkeySecretRef }}
+                  key: {{ .Values.license.pubkeySecretKey }}
+            {{- else if .Values.license.pubkeyPem }}
+            - name: MCPG_CP_LICENSE_PUBKEY_PEM
+              value: {{ .Values.license.pubkeyPem | quote }}
+            {{- end }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- with .Values.extraEnvFrom }}
+          envFrom:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          livenessProbe:
+            {{- toYaml .Values.livenessProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.readinessProbe | nindent 12 }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            {{- if and .Values.persistence.enabled (not .Values.postgresql.enabled) (not .Values.externalDatabase.enabled) (not .Values.cp.dbUrl) }}
+            - name: data
+              mountPath: /var/lib/mcpg-cp
+            {{- end }}
+            {{- if .Values.license.secretRef }}
+            - name: license
+              mountPath: /etc/mcpg/license
+              readOnly: true
+            {{- end }}
+            {{- /* Persist the signing-key dir ($HOME/.mcpg) on the Postgres
+                   path by mounting a PVC here (the sqlite `data` mount above is
+                   emitted only for the sqlite self-host default). */}}
+            {{- with .Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+      volumes:
+        {{- if and .Values.persistence.enabled (not .Values.postgresql.enabled) (not .Values.externalDatabase.enabled) (not .Values.cp.dbUrl) }}
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "mcpg-cp.fullname" . }}-data
+        {{- end }}
+        {{- if .Values.license.secretRef }}
+        - name: license
+          secret:
+            secretName: {{ .Values.license.secretRef }}
+        {{- end }}
+        {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

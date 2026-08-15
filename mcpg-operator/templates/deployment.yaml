@@ -1,0 +1,150 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "mcpg-operator.fullname" . }}
+  namespace: {{ include "mcpg-operator.namespace" . }}
+  labels:
+    {{- include "mcpg-operator.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "mcpg-operator.selectorLabels" . | nindent 6 }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        {{- include "mcpg-operator.selectorLabels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "mcpg-operator.serviceAccountName" . }}
+      automountServiceAccountToken: true
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: operator
+          image: {{ include "mcpg-operator.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - --metrics-bind=0.0.0.0:{{ .Values.metrics.port }}
+            - --webhook-bind={{ .Values.webhook.bindAddress }}
+            {{- if .Values.webhook.enabled }}
+            - --tls-cert-dir=/var/run/operator/tls
+            {{- end }}
+            - --resync-interval-secs={{ .Values.operator.resyncIntervalSecs }}
+            - --reconcile-concurrency={{ .Values.operator.reconcileConcurrency }}
+            {{- if .Values.operator.watchNamespace }}
+            - --watch-namespace={{ .Values.operator.watchNamespace }}
+            {{- end }}
+            {{- if .Values.operator.sigstoreTrustRoot.enabled }}
+            - --sigstore-trust-root-path={{ .Values.operator.sigstoreTrustRoot.mountPath }}/{{ .Values.operator.sigstoreTrustRoot.key }}
+            {{- end }}
+            {{- with .Values.operator.extraArgs }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: RUST_LOG
+              value: {{ .Values.operator.logFilter | quote }}
+            - name: MCPG_OPERATOR_LOG_FORMAT
+              value: {{ .Values.operator.logFormat | quote }}
+            {{- with (include "mcpg-operator.gatewayImageRepository" .) }}
+            - name: MCPG_DEFAULT_GATEWAY_IMAGE_REPOSITORY
+              value: {{ . | quote }}
+            {{- end }}
+            - name: MCPG_OPERATOR_LEASE_NAMESPACE
+              value: {{ include "mcpg-operator.namespace" . | quote }}
+            # S-AUD-01 closure: the operator dynamically creates
+            # `mcpg-operator-tenant-secrets` RoleBindings in tenant
+            # namespaces, with this name as the ServiceAccount
+            # subject. Threading it from the chart guarantees the
+            # rendered RBAC and the operator process can never
+            # disagree on which SA to bind.
+            - name: MCPG_OPERATOR_SERVICE_ACCOUNT
+              value: {{ include "mcpg-operator.serviceAccountName" . | quote }}
+            {{- /* null = built-in standard set (env var unset); "" = explicit
+                 disable; csv = replace. kindIs keeps the three states
+                 distinct — a plain `with` would swallow "". */}}
+            {{- if not (kindIs "invalid" .Values.operator.cloudDefaultPlugins) }}
+            - name: MCPG_OPERATOR_CLOUD_DEFAULT_PLUGINS
+              value: {{ .Values.operator.cloudDefaultPlugins | quote }}
+            {{- end }}
+            {{- with .Values.operator.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          ports:
+            - name: webhook
+              containerPort: 9443
+              protocol: TCP
+            - name: metrics
+              containerPort: {{ .Values.metrics.port }}
+              protocol: TCP
+          livenessProbe:
+            {{- toYaml .Values.livenessProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.readinessProbe | nindent 12 }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          volumeMounts:
+            {{- if .Values.webhook.enabled }}
+            - name: webhook-tls
+              mountPath: /var/run/operator/tls
+              readOnly: true
+            {{- end }}
+            {{- if .Values.operator.sigstoreTrustRoot.enabled }}
+            - name: sigstore-trust-root
+              mountPath: {{ .Values.operator.sigstoreTrustRoot.mountPath }}
+              readOnly: true
+            {{- end }}
+      volumes:
+        {{- if .Values.webhook.enabled }}
+        - name: webhook-tls
+          secret:
+            secretName: {{ include "mcpg-operator.webhookSecretName" . }}
+            items:
+              - key: tls.crt
+                path: tls.crt
+              - key: tls.key
+                path: tls.key
+        {{- end }}
+        {{- if .Values.operator.sigstoreTrustRoot.enabled }}
+        - name: sigstore-trust-root
+          configMap:
+            name: {{ .Values.operator.sigstoreTrustRoot.configMapName }}
+        {{- end }}

@@ -1,0 +1,28 @@
+# Per-push checks for the Helm charts.
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+jobs:
+  check:
+    name: helm lint · render
+    if: vars.OSS_CI_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310  # v5.0.1
+      - name: Lint + render
+        # One directory per chart at the repo root; lint and render each.
+        run: |
+          set -euo pipefail
+          for chart in */Chart.yaml; do
+            dir="${chart%/Chart.yaml}"
+            echo "── ${dir}"
+            # Subcharts travel vendored UNPACKED under charts/ — helm rejects
+            # .tgz subcharts at package time — so resolve them offline.
+            helm dependency build "$dir" || helm dependency list "$dir"
+            helm lint "$dir"
+            helm template release "$dir" > /dev/null
+          done

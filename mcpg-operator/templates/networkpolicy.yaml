@@ -1,0 +1,102 @@
+{{- if .Values.networkPolicy.enabled }}
+# NetworkPolicy for the operator pod. Default-deny ingress +
+# egress with explicit allow-rules for the traffic the operator
+# actually needs:
+#
+# Ingress:
+#   - kube-apiserver → webhook port (admission review)
+#   - Prometheus → metrics port (scrape)
+#
+# Egress:
+#   - kube-apiserver (kube client + lease + watch)
+#   - DNS (kube-dns, configurable)
+#   - OCI registries for plugin pulls (operator-supplied CIDRs)
+#   - Sigstore Rekor + Fulcio for cosign / SLSA verification
+#     (only when cosign or SLSA is configured on any MCPGPlugin)
+#
+# Operators with stricter egress posture should override
+# `networkPolicy.egress.cidrs` to their internal mirror addresses.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "mcpg-operator.fullname" . }}
+  namespace: {{ include "mcpg-operator.namespace" . }}
+  labels:
+    {{- include "mcpg-operator.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "mcpg-operator.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Webhook port — admission requests come from kube-apiserver.
+    # The apiserver's source IP varies by cluster, so we use a
+    # namespace-selector matching the kube-system namespace which
+    # is where the apiserver advertises (or use cidrs.from for
+    # off-cluster apiservers).
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+        {{- with .Values.networkPolicy.ingress.from }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      ports:
+        - port: {{ .Values.webhook.servicePort }}
+          protocol: TCP
+    # Metrics scrape — Prometheus pod (or sidecar) reaches this.
+    {{- if .Values.serviceMonitor.enabled }}
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ default "monitoring" .Values.networkPolicy.ingress.metricsNamespace }}
+        {{- with .Values.networkPolicy.ingress.metricsFrom }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      ports:
+        - port: {{ .Values.metrics.port }}
+          protocol: TCP
+    {{- end }}
+  egress:
+    # DNS resolution — without this every other egress rule
+    # breaks because the operator can't resolve apiserver /
+    # registry hostnames.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # kube-apiserver — the kube client uses this for every
+    # watch / patch / get. Inside the cluster the apiserver
+    # endpoint typically resolves to the default/kubernetes
+    # service which is on a stable ClusterIP.
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - port: 443
+          protocol: TCP
+        - port: 6443
+          protocol: TCP
+    # Operator-supplied egress (OCI registries, Rekor, Fulcio,
+    # corporate proxies). Default empty — operators flip on the
+    # ones their fleet needs.
+    {{- with .Values.networkPolicy.egress.cidrs }}
+    - to:
+        {{- range . }}
+        - ipBlock:
+            cidr: {{ . }}
+        {{- end }}
+    {{- end }}
+    {{- with .Values.networkPolicy.egress.extra }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- end }}

@@ -1,0 +1,582 @@
+# ============================================================================
+# MCPG Helm Chart — Default Values
+# ============================================================================
+# See apps/gateway/docs/configuration.md for full config reference.
+#
+# MULTI-INSTANCE DEPLOYMENT
+# -------------------------
+# When running more than one replica (replicaCount > 1 or autoscaling.enabled),
+# mcpg REQUIRES a distributed cluster backend so that sessions / tasks /
+# pipelines / subscriptions / delivery / cancellation share state across
+# replicas. Set `cluster.kind` ONCE at the top level and every capability
+# inherits the cluster plugin's connection:
+#
+#   cluster:
+#     kind: redis    # | nats | consul | etcd
+#     url: redis://redis.svc:6379
+#
+# The chart auto-renders this `cluster:` block when nats.enabled=true or
+# redis.enabled=true (or external{Nats,Redis}.enabled=true) — operators
+# don't need to set anything manually for the bundled / external case.
+#
+# Phase 6c-10 (2026-05-02) narrowed the per-capability override path to
+# in-process kinds only (memory / file). For redis / nats capability state,
+# `cluster.kind` is the single source of truth — capabilities cannot open
+# their own redis / nats connection. The previous `storeBackend.*` knobs
+# that drove per-cap `kind: redis | nats` overrides are gone.
+#
+# Two patterns are supported:
+#
+#   1. Bundled subchart  — set nats.enabled=true or redis.enabled=true
+#      The chart deploys NATS/Redis and auto-wires `cluster.kind` to it.
+#
+#   2. External service  — set externalNats or externalRedis with your
+#      own connection details. No subchart is deployed; `cluster.kind`
+#      auto-wires to the external endpoint.
+#
+# Operators wanting cluster.kind=consul / etcd or fine-grained tuning
+# (TLS, replicas, lease TTLs, …) put their cluster block under
+# `extraConfig.cluster:` — that merges last and wins over the auto-render.
+#
+# ============================================================================
+
+# ---------------------------------------------------------------------------
+# OCI coordinates shared by every first-party image
+# ---------------------------------------------------------------------------
+# `global` is merged into subcharts by Helm, so an umbrella sets these once and
+# every mcpg chart under it follows. Third-party images (NATS, Redis, the test
+# busybox) are addressed by their own upstream coordinates and are NOT affected.
+#
+# The canonical values live in tools/release/oci-registry.json; see
+# docs/release/OCI-REGISTRY-CONFIGURATION.md for the channel model (the public
+# channel is this same block with `repositoryPrefix: mcpg-dev`).
+global:
+  image:
+    # -- Registry namespace + path the image NAME is joined onto. Empty
+    # publishes at host root.
+    repositoryPrefix: mcpg-dev/source-code
+    # -- Registry host every first-party image is pulled from. Left UNSET
+    # rather than defaulted to `ghcr.io` here on purpose: the bundled nats
+    # subchart reads this very key as a blanket registry for its own images
+    # (charts/nats/templates/_helpers.tpl, "nats.image"), so a literal
+    # default would silently repoint nats/nats-box/config-reloader at a
+    # registry that does not carry them. The `ghcr.io` default lives in the
+    # "mcpg.image" helper instead, where only first-party images see it.
+    # Setting this DOES also move the bundled nats images — that is the nats
+    # chart's own contract for a mirrored registry, and the right behaviour
+    # for the air-gapped case this key exists to serve.
+    # registry: ghcr.io
+
+# -- Number of replicas (ignored when autoscaling.enabled=true)
+replicaCount: 1
+
+image:
+  # -- Container image NAME, joined onto `global.image.repositoryPrefix`. A
+  # value containing a `/` is taken as an already-qualified repository and the
+  # prefix is not prepended, so the image can live outside the prefix layout.
+  repository: gateway
+  # -- Container image registry host. Absent (the default) inherits
+  # `global.image.registry`; set it to pin this chart alone, or set it to ""
+  # for a host-less reference.
+  # registry: ghcr.io
+  # -- Container image tag (defaults to .Chart.AppVersion)
+  tag: ""
+  # -- Image pull policy
+  pullPolicy: IfNotPresent
+
+# -- Image pull secrets for private registries
+imagePullSecrets: []
+
+# -- Override the release name
+nameOverride: ""
+# -- Override the full release name
+fullnameOverride: ""
+
+# ---------------------------------------------------------------------------
+# Service Account
+# ---------------------------------------------------------------------------
+serviceAccount:
+  # -- Create a ServiceAccount
+  create: true
+  # -- Annotations for the ServiceAccount (e.g. for IRSA / Workload Identity)
+  annotations: {}
+  # -- ServiceAccount name (generated if empty)
+  name: ""
+  # -- Automount the service account token
+  automountServiceAccountToken: false
+
+# ---------------------------------------------------------------------------
+# Pod-level settings
+# ---------------------------------------------------------------------------
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65534
+  runAsGroup: 65534
+  fsGroup: 65534
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 65534
+  runAsGroup: 65534
+  capabilities:
+    drop:
+      - ALL
+
+# ---------------------------------------------------------------------------
+# Service
+# ---------------------------------------------------------------------------
+service:
+  # -- Service type
+  type: ClusterIP
+  # -- MCP gateway port
+  port: 8787
+  # -- Node port (only when type=NodePort)
+  nodePort: ""
+  # -- Additional service annotations
+  annotations: {}
+
+# ---------------------------------------------------------------------------
+# Ingress
+# ---------------------------------------------------------------------------
+ingress:
+  # -- Enable Ingress resource
+  enabled: false
+  # -- Ingress class name
+  className: ""
+  # -- Ingress annotations
+  annotations: {}
+    # nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    # nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    # nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    # cert-manager.io/cluster-issuer: letsencrypt-prod
+  hosts:
+    - host: mcpg.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  # -- TLS configuration
+  tls: []
+  #  - secretName: mcpg-tls
+  #    hosts:
+  #      - mcpg.example.com
+
+# ---------------------------------------------------------------------------
+# Resource limits
+# ---------------------------------------------------------------------------
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: "2"
+    memory: 512Mi
+
+# ---------------------------------------------------------------------------
+# Autoscaling (HPA)
+# ---------------------------------------------------------------------------
+autoscaling:
+  # -- Enable Horizontal Pod Autoscaler
+  enabled: false
+  # -- Minimum replicas
+  minReplicas: 2
+  # -- Maximum replicas
+  maxReplicas: 10
+  # -- Target CPU utilization percentage
+  targetCPUUtilizationPercentage: 70
+  # -- Target memory utilization percentage
+  targetMemoryUtilizationPercentage: 80
+  # -- Custom metrics for scaling (e.g., mcpg_active_sessions)
+  customMetrics: []
+  # -- HPA behavior for scale up/down tuning
+  behavior: {}
+  #   scaleDown:
+  #     stabilizationWindowSeconds: 300
+  #     policies:
+  #       - type: Percent
+  #         value: 10
+  #         periodSeconds: 60
+  #   scaleUp:
+  #     stabilizationWindowSeconds: 0
+  #     policies:
+  #       - type: Percent
+  #         value: 100
+  #         periodSeconds: 15
+
+# ---------------------------------------------------------------------------
+# Pod Disruption Budget
+# ---------------------------------------------------------------------------
+podDisruptionBudget:
+  # -- Enable PDB
+  enabled: false
+  # -- Minimum available pods (mutually exclusive with maxUnavailable)
+  minAvailable: 1
+  # -- Maximum unavailable pods
+  maxUnavailable: ""
+
+# ---------------------------------------------------------------------------
+# Node scheduling
+# ---------------------------------------------------------------------------
+nodeSelector: {}
+tolerations: []
+affinity: {}
+# -- Topology spread constraints for even pod distribution
+topologySpreadConstraints: []
+# - maxSkew: 1
+#   topologyKey: topology.kubernetes.io/zone
+#   whenUnsatisfiable: DoNotSchedule
+#   labelSelector:
+#     matchLabels: {}
+
+# -- Priority class name
+priorityClassName: ""
+
+# -- Termination grace period (seconds)
+terminationGracePeriodSeconds: 30
+
+# ---------------------------------------------------------------------------
+# Probes
+# ---------------------------------------------------------------------------
+livenessProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 15
+  timeoutSeconds: 3
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /ready
+    port: http
+  initialDelaySeconds: 3
+  periodSeconds: 10
+  timeoutSeconds: 3
+  failureThreshold: 3
+
+startupProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 2
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 12
+
+# ---------------------------------------------------------------------------
+# Network Policy
+# ---------------------------------------------------------------------------
+networkPolicy:
+  # -- Enable NetworkPolicy
+  enabled: false
+  # -- Allow ingress from these sources (empty = allow all)
+  ingressFrom: []
+  #  - namespaceSelector:
+  #      matchLabels:
+  #        name: ingress-nginx
+  # -- Allow egress to these destinations (empty = allow all)
+  egressTo: []
+  # -- Additional egress rules (e.g., for NATS, Redis, external APIs)
+  additionalEgressRules: []
+
+# ---------------------------------------------------------------------------
+# Prometheus / Monitoring
+# ---------------------------------------------------------------------------
+metrics:
+  # -- Enable Prometheus metrics scraping
+  enabled: false
+  serviceMonitor:
+    # -- Create a ServiceMonitor resource (requires prometheus-operator CRDs)
+    enabled: false
+    # -- Namespace for the ServiceMonitor (defaults to release namespace)
+    namespace: ""
+    # -- Scrape interval
+    interval: 30s
+    # -- Scrape timeout
+    scrapeTimeout: 10s
+    # -- Additional labels for the ServiceMonitor
+    labels: {}
+    # -- Metric relabeling configs
+    metricRelabelings: []
+    # -- Relabeling configs
+    relabelings: []
+  prometheusRule:
+    # -- Create PrometheusRule resource for alerts
+    enabled: false
+    # -- Namespace for the PrometheusRule
+    namespace: ""
+    # -- Additional labels
+    labels: {}
+    # -- Alerting rules
+    rules: []
+    # - alert: McpgHighErrorRate
+    #   expr: rate(mcpg_binding_executions_total{outcome="error"}[5m]) > 0.1
+    #   for: 5m
+    #   labels:
+    #     severity: warning
+    #   annotations:
+    #     summary: "MCPG high error rate"
+
+# ---------------------------------------------------------------------------
+# Persistence (for file-backed session store)
+# ---------------------------------------------------------------------------
+persistence:
+  # -- Enable persistent volume for file-backed session store
+  enabled: false
+  # -- Storage class (empty = default)
+  storageClassName: ""
+  # -- Access modes
+  accessModes:
+    - ReadWriteOnce
+  # -- Volume size
+  size: 1Gi
+  # -- Annotations for the PVC
+  annotations: {}
+  # -- Existing PVC name (overrides dynamic provisioning)
+  existingClaim: ""
+
+# ---------------------------------------------------------------------------
+# TLS
+# ---------------------------------------------------------------------------
+tls:
+  # -- Enable TLS termination at the gateway (not via ingress)
+  enabled: false
+  # -- Name of existing Secret containing tls.crt and tls.key
+  existingSecret: ""
+  # -- Minimum TLS version ("1.2" or "1.3")
+  minVersion: "1.2"
+  # -- Inline certificate (base64 encoded, used only if existingSecret is empty)
+  certBase64: ""
+  # -- Inline private key (base64 encoded, used only if existingSecret is empty)
+  keyBase64: ""
+
+# ---------------------------------------------------------------------------
+# Extra environment variables and volumes
+# ---------------------------------------------------------------------------
+# -- Extra environment variables (name/value pairs)
+extraEnv: []
+# - name: MPP_SECRET_KEY
+#   valueFrom:
+#     secretKeyRef:
+#       name: mcpg-payment-secrets
+#       key: mpp-secret
+
+# -- Extra environment variables from ConfigMaps/Secrets
+extraEnvFrom: []
+# - secretRef:
+#     name: mcpg-secrets
+
+# -- Extra volume mounts for the mcpg container
+extraVolumeMounts: []
+# - name: plugins
+#   mountPath: /var/lib/mcpg/plugins
+#   readOnly: true
+
+# -- Extra volumes for the pod
+extraVolumes: []
+# - name: plugins
+#   persistentVolumeClaim:
+#     claimName: mcpg-plugins
+
+# -- Init containers
+initContainers: []
+
+# -- Sidecar containers
+sidecars: []
+
+# ===========================================================================
+# NATS — Bundled Subchart (nats-io/nats)
+# ===========================================================================
+# Deploys a NATS server alongside mcpg. When enabled, mcpg auto-configures:
+#   - Session / pipeline / task stores → nats_kv
+#   - Delivery bus → NATS pub/sub
+#
+# To use an EXTERNAL NATS instead, leave nats.enabled=false and set
+# externalNats below.
+# ---------------------------------------------------------------------------
+nats:
+  # -- Deploy the bundled NATS subchart
+  enabled: false
+
+  # ---- Subchart values (nats-io/nats) ----
+  # Override any nats subchart value here. Common overrides:
+  config:
+    jetstream:
+      enabled: true
+      memoryStore:
+        maxSize: 256Mi
+      fileStore:
+        maxSize: 1Gi
+
+# ===========================================================================
+# Redis — Bundled Subchart (bitnami/redis)
+# ===========================================================================
+# Deploys a Redis instance alongside mcpg. When enabled, mcpg auto-configures:
+#   - Session / pipeline / task stores → redis
+#   - Delivery bus → Redis pub/sub
+#
+# To use an EXTERNAL Redis instead, leave redis.enabled=false and set
+# externalRedis below.
+# ---------------------------------------------------------------------------
+redis:
+  # -- Deploy the bundled Redis subchart
+  enabled: false
+
+  # ---- Subchart values (bitnami/redis) ----
+  # Override any bitnami/redis value here. Common overrides:
+  architecture: standalone
+  auth:
+    # Auth ON by default (W-24): the bundled Redis generates a password
+    # secret (<release>-redis / key `redis-password`) which the gateway
+    # injects via MCPG_CLUSTER__PASSWORD. Set false ONLY for throwaway
+    # local clusters.
+    enabled: true
+  # The bundled Redis runs plaintext (no TLS) in-namespace — fine for
+  # quick-start/dev. To make the bundled coordinator TLS-terminated, set
+  # `redis.tls.enabled: true` here (and provision the certs per the
+  # bitnami/redis chart); the gateway then connects over `rediss://`.
+  master:
+    persistence:
+      enabled: true
+      size: 1Gi
+
+# ===========================================================================
+# External NATS — Bring Your Own
+# ===========================================================================
+# Use when connecting to a NATS cluster not managed by this chart.
+# Ignored if nats.enabled=true (bundled takes precedence).
+# ---------------------------------------------------------------------------
+externalNats:
+  # -- Enable connection to an external NATS server
+  enabled: false
+  # -- NATS server URL. Use `tls://` for a secure default — the gateway
+  #    REFUSES a plaintext NATS coordinator at boot (the nats plugin
+  #    requires TLS by default). For a plaintext `nats://` endpoint you
+  #    must also set `cluster.insecureTransport: true` (local/dev only).
+  url: "tls://nats.example.com:4222"
+  # -- Path to NATS credentials file inside the container
+  # Mount the credentials via extraVolumes/extraVolumeMounts or a Secret.
+  credentialsPath: ""
+
+# ===========================================================================
+# External Redis — Bring Your Own
+# ===========================================================================
+# Use when connecting to a Redis instance not managed by this chart.
+# Ignored if redis.enabled=true (bundled takes precedence).
+# ---------------------------------------------------------------------------
+externalRedis:
+  # -- Enable connection to an external Redis server
+  # Drives `cluster.kind: redis` in the rendered configmap.
+  enabled: false
+  # -- Redis URL. Use `rediss://` for a secure default — the gateway
+  #    REFUSES a plaintext `redis://` coordinator at boot. For a plaintext
+  #    endpoint you must also set `cluster.insecureTransport: true`
+  #    (local/dev only).
+  url: "rediss://redis.example.com:6379"
+  # -- Name of an existing Secret containing the Redis password
+  # The password is injected out-of-URL via the MCPG_CLUSTER__PASSWORD env
+  # var (W-24) — keep credentials OUT of the url above.
+  existingSecret: ""
+  # -- Key within the Secret that holds the password
+  existingSecretKey: "redis-password"
+
+# ===========================================================================
+# Cluster Coordinator — Transport Security (W-9)
+# ===========================================================================
+# The cluster coordinator carries ALL shared multi-instance state across
+# replicas — sessions, credential-cache events, delivery payloads. The
+# gateway REFUSES to boot against a plaintext (non-TLS) coordinator
+# transport unless the opt-out below is set.
+#
+#   - External redis/nats/etcd/consul: use a TLS scheme (`rediss://` /
+#     `tls://` / `https://`) for a secure default. A plaintext endpoint is
+#     refused at boot.
+#   - Bundled subcharts (redis.enabled / nats.enabled): the chart deploys
+#     them WITHOUT TLS (plaintext, in-namespace) for quick-start/dev, so the
+#     rendered cluster block sets the opt-out automatically. For production,
+#     run an external TLS-terminated coordinator (or enable subchart TLS).
+# ---------------------------------------------------------------------------
+cluster:
+  # -- Permit a plaintext (non-TLS) coordinator transport. Maps to the
+  #    gateway's `cluster.allow_insecure_transport`. Leave `false` for a
+  #    secure default; the bundled subchart path overrides it to `true`
+  #    in the rendered config (the bundled redis/nats run plaintext
+  #    in-namespace). Set `true` here only for an external plaintext
+  #    coordinator on a trusted local/dev network.
+  insecureTransport: false
+
+# ===========================================================================
+# MCPG Store Configuration
+# ===========================================================================
+# Fine-grained control over which backend each store uses.
+# When a distributed backend (NATS or Redis) is available, the chart
+# defaults all stores to use it. Override here to mix backends.
+# ---------------------------------------------------------------------------
+# MCPG Application Configuration
+# ---------------------------------------------------------------------------
+# This block is rendered as config.yaml and mounted into the container.
+# See apps/gateway/docs/configuration.md for all options.
+# Environment variables with MCPG_ prefix can override any field.
+#
+# NOTE: the `cluster:` and `nats:` sections are auto-generated from the
+# NATS / Redis settings above. Redis is wired via `cluster.kind: redis`
+# only — there is no separate top-level `redis:` block (T3-8, 2026-05-04).
+# Any values you set here for `cluster:` / `nats:` are overridden by the
+# auto-wiring logic in the configmap template UNLESS you put them under
+# `extraConfig:` (which merges last and wins). Use `extraConfig.cluster:`
+# for custom cluster.kind config (consul, etcd, TLS, replicas, …).
+# ---------------------------------------------------------------------------
+config:
+  features:
+    debug_tools_enabled: false   # was `debug.enabled` pre-Layout-#6
+
+  gateway:
+    server:
+      bind_address: "0.0.0.0:8787"
+      health_path: /health
+      mcp_path: /mcp
+      allowed_origins: []
+      replay_window_limit: 16
+      session_idle_timeout_ms: 900000
+
+  observability:
+    enabled: true
+    logs:
+      enabled: true
+      level: info
+      sinks:
+        - kind: stderr
+          config:
+            format: json
+    metrics:
+      enabled: true
+      sinks:
+        - kind: prometheus
+          config:
+            path: /metrics
+    # traces:
+    #   enabled: true
+    #   service_name: mcpg
+    #   propagate_context: true
+    #   sinks:
+    #     - kind: otlp
+    #       config:
+    #         url: "http://otel-collector:4317"
+
+  governance:
+    policy:
+      tool_access:
+        default_minimum_trust: unauthenticated
+
+  bindings: []
+
+# -- Raw extra config merged into config.yaml (for advanced fields not in
+#    the config block above, or to force-override auto-wired values)
+extraConfig: {}

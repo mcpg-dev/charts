@@ -1,0 +1,46 @@
+# Sizing overlay: large clusters (1000+ plugin/gateway resources).
+#
+# Apply on top of values.yaml:
+#   helm install mcpg-operator ./helm/charts/mcpg-operator \
+#     -f values.yaml -f values-large.yaml
+#
+# S-AUD-15: at this scale you are well outside the default headroom. We bump the
+# memory limit, loosen probe cadence, and triple the resync interval (cross-CRD
+# watches handle propagation; the resync is just a safety net).
+#
+# Recommended: run the operator on its own node pool to avoid noisy-neighbour
+# CPU contention.
+
+replicaCount: 2
+
+resources:
+  requests:
+    cpu: 500m
+    memory: 512Mi
+  limits:
+    cpu: 4
+    memory: 1Gi
+
+livenessProbe:
+  initialDelaySeconds: 15
+  periodSeconds: 20
+
+readinessProbe:
+  initialDelaySeconds: 10
+  periodSeconds: 10
+
+# Operator runtime tuning — these are the keys the chart ACTUALLY consumes
+# (deployment.yaml threads them into --resync-interval-secs /
+# --reconcile-concurrency). At this scale the resync is a pure safety net, so we
+# triple it; the per-controller worker pool is widened.
+operator:
+  resyncIntervalSecs: 1800
+  reconcileConcurrency: 16
+
+# NOTE: leader-election lease tuning is an operator ENV knob
+# (MCPG_OPERATOR_LEASE_DURATION_SECS / _RENEW_SECS / _RETRY_SECS — config.rs);
+# set it via `operator.extraEnv` if the defaults are too tight at scale.
+# apiserver QPS/burst and resync jitter are not yet operator flags. The previous
+# top-level `leaderElection` / `controllersConcurrency` / `clientQps` /
+# `clientBurst` / `resyncIntervalSeconds` keys were never consumed by the chart
+# and have been removed.

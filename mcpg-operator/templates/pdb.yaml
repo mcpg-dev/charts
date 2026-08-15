@@ -1,0 +1,22 @@
+{{- if and .Values.podDisruptionBudget.enabled (gt (int .Values.replicaCount) 1) }}
+# PodDisruptionBudget for HA installs. minAvailable defaults to
+# 1 — that's the leader-election operating point. Operators
+# running 3+ replicas can bump this to 2 to keep one warm spare
+# during a node drain.
+#
+# Skipped entirely when replicaCount < 2 because a PDB on a
+# single-replica deployment blocks every node-drain (a known
+# kubectl drain footgun).
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "mcpg-operator.fullname" . }}
+  namespace: {{ include "mcpg-operator.namespace" . }}
+  labels:
+    {{- include "mcpg-operator.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "mcpg-operator.selectorLabels" . | nindent 6 }}
+{{- end }}

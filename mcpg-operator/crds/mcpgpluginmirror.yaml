@@ -1,0 +1,241 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: mcpgpluginmirrors.mcpg.dev
+spec:
+  group: mcpg.dev
+  names:
+    categories: []
+    kind: MCPGPluginMirror
+    plural: mcpgpluginmirrors
+    shortNames:
+    - mcpgm
+    singular: mcpgpluginmirror
+  scope: Cluster
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.upstream.registry
+      name: Upstream
+      type: string
+    - jsonPath: .status.reachable
+      name: Reachable
+      type: string
+    - jsonPath: .status.proxiedReferences
+      name: Proxied
+      type: integer
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: Auto-generated derived type for MCPGPluginMirrorSpec via `CustomResource`
+        properties:
+          spec:
+            description: |-
+              In-cluster OCI mirror for air-gapped plugin pulls.
+              Cluster-scoped OCI mirror. `MCPGPlugin.spec.oci.mirrorRef` points
+              here; the operator rewrites the upstream ref onto this mirror's
+              endpoint before pulling.
+            properties:
+              auth:
+                description: |-
+                  Optional pull credentials for the mirror (a
+                  `kubernetes.io/dockerconfigjson` Secret in the operator
+                  namespace). When set, the operator pulls from the mirror with
+                  these instead of the plugin's own `oci.pullSecretRef`.
+                nullable: true
+                properties:
+                  secretRef:
+                    description: Reference to a `dockerconfigjson` Secret in the operator namespace.
+                    properties:
+                      key:
+                        description: |-
+                          Key within the Secret. Defaults to `.dockerconfigjson` when
+                          unset (the standard key for `kubernetes.io/dockerconfigjson`).
+                        nullable: true
+                        type: string
+                      secretName:
+                        type: string
+                    required:
+                    - secretName
+                    type: object
+                required:
+                - secretRef
+                type: object
+              endpoint:
+                description: Where the mirror registry lives in-cluster.
+                properties:
+                  insecure:
+                    default: false
+                    description: |-
+                      When true, the operator treats the mirror as plain-HTTP /
+                      self-signed (added to the OCI client's insecure-registry list).
+                      In-cluster mirrors on `:80` are the common case.
+                    type: boolean
+                  service:
+                    description: Service coordinates for the mirror registry.
+                    properties:
+                      name:
+                        type: string
+                      namespace:
+                        type: string
+                      pathPrefix:
+                        description: |-
+                          Optional path prefix the mirror serves repositories under
+                          (e.g. `/v2/mirror`). Joined between the registry host and the
+                          upstream repository path. Leading/trailing slashes are
+                          normalised.
+                        nullable: true
+                        type: string
+                      port:
+                        description: Service port the registry listens on (e.g. `80`).
+                        format: uint16
+                        maximum: 65535.0
+                        minimum: 0.0
+                        type: integer
+                    required:
+                    - name
+                    - namespace
+                    - port
+                    type: object
+                required:
+                - service
+                type: object
+              resyncInterval:
+                description: |-
+                  Optional reachability re-check cadence (informational; e.g.
+                  `1h`). The operator re-reconciles the mirror on its normal
+                  resync regardless — this is a hint for future scheduled probes.
+                nullable: true
+                type: string
+              upstream:
+                description: |-
+                  The public registry + namespace this mirror stands in for. Only
+                  plugin refs whose `image` starts with `<registry>/<namespace>`
+                  are rewritten; a ref pointing elsewhere is left untouched (and
+                  the air-gap admission gate, when enforced, rejects it).
+                properties:
+                  namespace:
+                    description: |-
+                      Namespace/org path under the registry, e.g.
+                      `mcpg-dev/source-code`. The repository segment after this
+                      prefix is preserved verbatim on the mirror.
+
+                      MUST be the upstream reference's FULL path prefix — every segment
+                      between the registry host and the repository name. Multi-segment
+                      values are expected, and matching is a literal `starts_with` on
+                      `<registry>/<namespace>/`.
+
+                      A partial or stale value is not rejected: the rewrite reports
+                      "not applicable" and the pull falls through to the upstream
+                      registry, which in an air-gapped cluster fails with no pointer
+                      back to this field. Two ways to get it wrong:
+                      - Too short — `mcpg-dev` does NOT match
+                        `ghcr.io/mcpg-dev/source-code/plugins/audit:1.0.0`; the value
+                        has to be `mcpg-dev/source-code`.
+                      - Stale after an upstream move — publishing under a base with one
+                        fewer path segment (`ghcr.io/mcpg-dev/plugins/audit`, four
+                        segments instead of five) leaves every already-deployed
+                        MCPGPluginMirror carrying the old `mcpg-dev/source-code` and
+                        mirroring nothing. Such a move must update this field on every
+                        MCPGPluginMirror in the cluster.
+                    type: string
+                  registry:
+                    description: Registry hostname, e.g. `ghcr.io`.
+                    type: string
+                required:
+                - namespace
+                - registry
+                type: object
+            required:
+            - endpoint
+            - upstream
+            type: object
+          status:
+            description: Observed state for `MCPGPluginMirror`.
+            nullable: true
+            properties:
+              conditions:
+                items:
+                  description: |-
+                    One status condition. Serde shape matches K8s
+                    `metav1.Condition` exactly so generic tooling (kubectl,
+                    kustomize, Argo CD) interprets it correctly.
+                  properties:
+                    lastTransitionTime:
+                      description: RFC3339 timestamp of the most recent transition.
+                      format: date-time
+                      type: string
+                    message:
+                      description: Free-text human-readable detail. May be empty.
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        `metadata.generation` the controller had observed when
+                        it set this condition. Lets clients detect stale status.
+                      format: int64
+                      nullable: true
+                      type: integer
+                    reason:
+                      description: |-
+                        CamelCase enum the operator defines per controller.
+                        E.g. `AllReplicasAvailable`, `DependencyPending`,
+                        `SignatureMismatch`.
+                      type: string
+                    status:
+                      description: |-
+                        `"True"`, `"False"`, or `"Unknown"`. K8s convention is to
+                        keep this as a string (not a bool) so `Unknown` is
+                        representable.
+                      type: string
+                    type:
+                      description: |-
+                        `Ready`, `Reconciling`, `Available`, `Degraded`,
+                        `Progressing`, `Failed`, plus per-CRD types.
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              endpointHost:
+                description: |-
+                  The resolved in-cluster registry host
+                  (`<name>.<namespace>.svc.cluster.local:<port>`), surfaced so ops
+                  can confirm the rewrite target without parsing the spec.
+                nullable: true
+                type: string
+              lastReconcileTime:
+                format: date-time
+                nullable: true
+                type: string
+              observedGeneration:
+                format: int64
+                nullable: true
+                type: integer
+              proxiedReferences:
+                description: |-
+                  Count of `MCPGPlugin`s currently referencing this mirror via
+                  `oci.mirrorRef`. Blast-radius signal for ops.
+                format: int64
+                nullable: true
+                type: integer
+              reachable:
+                description: |-
+                  Whether the operator could reach the mirror's `/v2/` endpoint at
+                  last reconcile. `false` (with a `Ready=False` condition) means
+                  plugin pulls through this mirror will fail.
+                nullable: true
+                type: boolean
+            type: object
+        required:
+        - spec
+        title: MCPGPluginMirror
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

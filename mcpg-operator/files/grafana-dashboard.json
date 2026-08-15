@@ -1,0 +1,235 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {"type": "datasource", "uid": "grafana"},
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "MCPG Operator — reconcile health, dependency state, and OCI pull pipeline.",
+  "editable": true,
+  "graphTooltip": 1,
+  "panels": [
+    {
+      "type": "row",
+      "title": "Reconcile loop",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0},
+      "collapsed": false
+    },
+    {
+      "type": "stat",
+      "title": "Active leader",
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 1},
+      "datasource": {"type": "prometheus"},
+      "targets": [
+        {
+          "expr": "sum(mcpg_operator_leader_elected)",
+          "legendFormat": "leaders",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": {"calcs": ["lastNotNull"]}
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "red", "value": null},
+              {"color": "green", "value": 1}
+            ]
+          },
+          "unit": "short"
+        }
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Reconciles (last 5m, all controllers)",
+      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 1},
+      "datasource": {"type": "prometheus"},
+      "targets": [
+        {
+          "expr": "sum(rate(mcpg_operator_reconcile_total[5m]))",
+          "legendFormat": "rate",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "ops"}},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}}
+    },
+    {
+      "type": "stat",
+      "title": "Reconcile error rate (transient)",
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 1},
+      "datasource": {"type": "prometheus"},
+      "targets": [
+        {
+          "expr": "sum(rate(mcpg_operator_reconcile_total{outcome=\"transient_error\"}[5m]))",
+          "legendFormat": "errors",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 0.05},
+              {"color": "red", "value": 0.5}
+            ]
+          }
+        }
+      },
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "background"}
+    },
+    {
+      "type": "stat",
+      "title": "Dependency-pending rate",
+      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 1},
+      "datasource": {"type": "prometheus"},
+      "targets": [
+        {
+          "expr": "sum(rate(mcpg_operator_reconcile_total{outcome=\"dependency_pending\"}[5m]))",
+          "legendFormat": "pending",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "ops"}},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}}
+    },
+    {
+      "type": "timeseries",
+      "title": "Reconcile rate by controller / outcome",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 5},
+      "datasource": {"type": "prometheus"},
+      "targets": [
+        {
+          "expr": "sum by (controller, outcome) (rate(mcpg_operator_reconcile_total[1m]))",
+          "legendFormat": "{{controller}} / {{outcome}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {"unit": "ops", "custom": {"drawStyle": "line", "fillOpacity": 10}}
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Reconcile latency p50 / p95 / p99",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 5},
+      "datasource": {"type": "prometheus"},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.5, sum by (le, controller) (rate(mcpg_operator_reconcile_duration_seconds_bucket[5m])))",
+          "legendFormat": "p50 {{controller}}",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, controller) (rate(mcpg_operator_reconcile_duration_seconds_bucket[5m])))",
+          "legendFormat": "p95 {{controller}}",
+          "refId": "B"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum by (le, controller) (rate(mcpg_operator_reconcile_duration_seconds_bucket[5m])))",
+          "legendFormat": "p99 {{controller}}",
+          "refId": "C"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "s"}}
+    },
+    {
+      "type": "row",
+      "title": "Dependencies",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 13},
+      "collapsed": false
+    },
+    {
+      "type": "timeseries",
+      "title": "Dependency unresolved by reason",
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 14},
+      "datasource": {"type": "prometheus"},
+      "targets": [
+        {
+          "expr": "sum by (controller, dependency, reason) (rate(mcpg_operator_dependency_unresolved_total[1m]))",
+          "legendFormat": "{{controller}} → {{dependency}} ({{reason}})",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "ops"}}
+    },
+    {
+      "type": "row",
+      "title": "OCI plugin pulls",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 22},
+      "collapsed": false
+    },
+    {
+      "type": "timeseries",
+      "title": "OCI pull rate by outcome",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 23},
+      "datasource": {"type": "prometheus"},
+      "targets": [
+        {
+          "expr": "sum by (outcome) (rate(mcpg_operator_oci_pull_total[1m]))",
+          "legendFormat": "{{outcome}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "ops"}}
+    },
+    {
+      "type": "timeseries",
+      "title": "OCI pull duration p95",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 23},
+      "datasource": {"type": "prometheus"},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(mcpg_operator_oci_pull_duration_seconds_bucket[5m])))",
+          "legendFormat": "p95",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "s"}}
+    },
+    {
+      "type": "row",
+      "title": "Reconcile freshness",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 31},
+      "collapsed": false
+    },
+    {
+      "type": "timeseries",
+      "title": "Time since last reconcile per controller",
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 32},
+      "datasource": {"type": "prometheus"},
+      "targets": [
+        {
+          "expr": "time() - mcpg_operator_last_reconcile_timestamp_seconds",
+          "legendFormat": "{{controller}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "s"}}
+    }
+  ],
+  "schemaVersion": 38,
+  "tags": ["mcpg", "operator"],
+  "templating": {"list": []},
+  "time": {"from": "now-1h", "to": "now"},
+  "timezone": "",
+  "title": "MCPG Operator",
+  "uid": "mcpg-operator",
+  "version": 1
+}

@@ -1,0 +1,218 @@
+{{- if .Values.webhook.enabled }}
+# ValidatingWebhookConfiguration for the operator's CRDs.
+# Pre-1.0 we serve only v1alpha1; older alpha versions are
+# dropped wholesale rather than carried via a conversion webhook.
+#
+# `webhook.failurePolicy` defaults to `Fail` — production should
+# fail-closed when the operator is unreachable. If the operator
+# wedges and CRD edits queue up, see RUNBOOK.md §7 ("Webhook
+# failing → Break-glass") for the documented procedure to
+# temporarily flip every webhook here to `Ignore`. Annotations
+# `mcpg.dev/break-glass-disabled-at` + `mcpg.dev/break-glass-reason`
+# are the audit trail compliance pipelines should alert on.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: {{ include "mcpg-operator.fullname" . }}-validation
+  labels:
+    {{- include "mcpg-operator.labels" . | nindent 4 }}
+  {{- if .Values.certManager.enabled }}
+  annotations:
+    cert-manager.io/inject-ca-from: {{ printf "%s/%s" (include "mcpg-operator.namespace" .) (include "mcpg-operator.webhookSecretName" .) | quote }}
+  {{- end }}
+webhooks:
+  - name: mcpggateways.v1alpha1.mcpg.dev
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    timeoutSeconds: 10
+    failurePolicy: {{ .Values.webhook.failurePolicy }}
+    rules:
+      - apiGroups: ["mcpg.dev"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["mcpggateways"]
+        scope: Namespaced
+    clientConfig:
+      service:
+        namespace: {{ include "mcpg-operator.namespace" . }}
+        name: {{ include "mcpg-operator.webhookServiceName" . }}
+        path: /validate-mcpg-dev-v1alpha1-mcpggateway
+        port: {{ .Values.webhook.servicePort }}
+      {{- if not .Values.certManager.enabled }}
+      caBundle: ""
+      {{- end }}
+    namespaceSelector:
+      matchExpressions:
+        - key: mcpg.dev/skip-validation
+          operator: DoesNotExist
+  - name: mcpgrevocationlists.mcpg.dev
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    timeoutSeconds: 10
+    failurePolicy: {{ .Values.webhook.failurePolicy }}
+    rules:
+      - apiGroups: ["mcpg.dev"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["mcpgrevocationlists"]
+        scope: Cluster
+    clientConfig:
+      service:
+        namespace: {{ include "mcpg-operator.namespace" . }}
+        name: {{ include "mcpg-operator.webhookServiceName" . }}
+        path: /validate-mcpg-dev-v1alpha1-mcpgrevocationlist
+        port: {{ .Values.webhook.servicePort }}
+      {{- if not .Values.certManager.enabled }}
+      caBundle: ""
+      {{- end }}
+  - name: mcpgplugins.mcpg.dev
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    timeoutSeconds: 10
+    failurePolicy: {{ .Values.webhook.failurePolicy }}
+    rules:
+      - apiGroups: ["mcpg.dev"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["mcpgplugins"]
+        scope: Cluster
+    clientConfig:
+      service:
+        namespace: {{ include "mcpg-operator.namespace" . }}
+        name: {{ include "mcpg-operator.webhookServiceName" . }}
+        path: /validate-mcpg-dev-v1alpha1-mcpgplugin
+        port: {{ .Values.webhook.servicePort }}
+      {{- if not .Values.certManager.enabled }}
+      caBundle: ""
+      {{- end }}
+  - name: mcpgpluginsets.mcpg.dev
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    timeoutSeconds: 10
+    failurePolicy: {{ .Values.webhook.failurePolicy }}
+    rules:
+      - apiGroups: ["mcpg.dev"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["mcpgpluginsets"]
+        scope: Namespaced
+    clientConfig:
+      service:
+        namespace: {{ include "mcpg-operator.namespace" . }}
+        name: {{ include "mcpg-operator.webhookServiceName" . }}
+        path: /validate-mcpg-dev-v1alpha1-mcpgpluginset
+        port: {{ .Values.webhook.servicePort }}
+      {{- if not .Values.certManager.enabled }}
+      caBundle: ""
+      {{- end }}
+    namespaceSelector:
+      matchExpressions:
+        - key: mcpg.dev/skip-validation
+          operator: DoesNotExist
+  - name: mcpgclusters.mcpg.dev
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    timeoutSeconds: 10
+    failurePolicy: {{ .Values.webhook.failurePolicy }}
+    rules:
+      - apiGroups: ["mcpg.dev"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["mcpgclusters"]
+        scope: Cluster
+    clientConfig:
+      service:
+        namespace: {{ include "mcpg-operator.namespace" . }}
+        name: {{ include "mcpg-operator.webhookServiceName" . }}
+        path: /validate-mcpg-dev-v1alpha1-mcpgcluster
+        port: {{ .Values.webhook.servicePort }}
+      {{- if not .Values.certManager.enabled }}
+      caBundle: ""
+      {{- end }}
+  - name: mcpgroutes.mcpg.dev
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    timeoutSeconds: 10
+    failurePolicy: {{ .Values.webhook.failurePolicy }}
+    rules:
+      - apiGroups: ["mcpg.dev"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["mcpgroutes"]
+        scope: Namespaced
+    clientConfig:
+      service:
+        namespace: {{ include "mcpg-operator.namespace" . }}
+        name: {{ include "mcpg-operator.webhookServiceName" . }}
+        path: /validate-mcpg-dev-v1alpha1-mcpgroute
+        port: {{ .Values.webhook.servicePort }}
+      {{- if not .Values.certManager.enabled }}
+      caBundle: ""
+      {{- end }}
+    namespaceSelector:
+      matchExpressions:
+        - key: mcpg.dev/skip-validation
+          operator: DoesNotExist
+  - name: mcpgpluginmirrors.mcpg.dev
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    timeoutSeconds: 10
+    failurePolicy: {{ .Values.webhook.failurePolicy }}
+    rules:
+      - apiGroups: ["mcpg.dev"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["mcpgpluginmirrors"]
+        scope: Cluster
+    clientConfig:
+      service:
+        namespace: {{ include "mcpg-operator.namespace" . }}
+        name: {{ include "mcpg-operator.webhookServiceName" . }}
+        path: /validate-mcpg-dev-v1alpha1-mcpgpluginmirror
+        port: {{ .Values.webhook.servicePort }}
+      {{- if not .Values.certManager.enabled }}
+      caBundle: ""
+      {{- end }}
+
+  - name: mcpgtenants.mcpg.dev
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    timeoutSeconds: 10
+    failurePolicy: {{ .Values.webhook.failurePolicy }}
+    rules:
+      - apiGroups: ["mcpg.dev"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["mcpgtenants"]
+        scope: Cluster
+    clientConfig:
+      service:
+        namespace: {{ include "mcpg-operator.namespace" . }}
+        name: {{ include "mcpg-operator.webhookServiceName" . }}
+        path: /validate-mcpg-dev-v1alpha1-mcpgtenant
+        port: {{ .Values.webhook.servicePort }}
+      {{- if not .Values.certManager.enabled }}
+      caBundle: ""
+      {{- end }}
+
+  - name: mcpgservers.mcpg.dev
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    timeoutSeconds: 10
+    failurePolicy: {{ .Values.webhook.failurePolicy }}
+    rules:
+      - apiGroups: ["mcpg.dev"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["mcpgservers"]
+        scope: Namespaced
+    clientConfig:
+      service:
+        namespace: {{ include "mcpg-operator.namespace" . }}
+        name: {{ include "mcpg-operator.webhookServiceName" . }}
+        path: /validate-mcpg-dev-v1alpha1-mcpgserver
+        port: {{ .Values.webhook.servicePort }}
+      {{- if not .Values.certManager.enabled }}
+      caBundle: ""
+      {{- end }}
+{{- end }}

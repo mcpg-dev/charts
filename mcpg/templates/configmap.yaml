@@ -1,0 +1,71 @@
+{{- /*
+  Build the mcpg config.yaml from:
+    1. .Values.config        — user-supplied application config
+    2. Auto-wired cluster    — when bundled or external NATS/Redis is on.
+    3. .Values.extraConfig   — force-override escape hatch
+
+  T3-8 follow-up (2026-05-04): top-level `nats:` / `redis:` / `kafka:`
+  config blocks are gone. NATS / Kafka connection params live on each
+  binding (bindings[].url + credentials_path for nats; bindings[].
+  bootstrap_servers + group_id for kafka). Operators using the
+  bundled or external NATS subchart reach the URL via the
+  `MCPG_NATS_URL` env var (rendered from `mcpg.natsUrl`) and reference
+  it from each binding with `${env.MCPG_NATS_URL}`.
+*/ -}}
+{{- $cfg := deepCopy .Values.config }}
+
+{{- /* ---- Auto-wire `cluster:` block when a backend is enabled ----
+    Phase 6c-10 narrowed per-capability `<cap>.store` overrides to
+    in-process kinds (memory / file). For redis / nats backends,
+    operators set `cluster.kind` once at the top level and every
+    capability inherits the connection. The chart auto-renders the
+    `cluster:` block when nats / redis is bundled or external —
+    operators wanting custom config (TLS, replicas, …) put it in
+    `extraConfig.cluster`, which merges last and wins.
+*/ -}}
+{{- /* Transport-security opt-out (W-9): the gateway refuses a plaintext
+    coordinator at boot. The operator sets `cluster.insecureTransport`;
+    the BUNDLED subcharts run plaintext in-namespace, so the auto-wire
+    forces the opt-out (and relaxes the nats plugin's TLS requirement)
+    for that known-plaintext path. External coordinators inherit the
+    operator's flag verbatim — use a TLS scheme for the secure default.
+
+    The bundled forced-insecure is suppressed when `extraConfig.cluster`
+    is present: that override can redirect the coordinator to a secure
+    external endpoint, and silently retaining `allow_insecure_transport:
+    true` would downgrade it. With an override, the operator owns the
+    flag (it defaults to `cluster.insecureTransport`). */ -}}
+{{- $insecure := .Values.cluster.insecureTransport | default false }}
+{{- $hasExtraCluster := hasKey (.Values.extraConfig | default dict) "cluster" }}
+{{- if not (hasKey $cfg "cluster") }}
+  {{- if (include "mcpg.natsAvailable" .) }}
+    {{- $natsUrl := (include "mcpg.natsUrl" .) }}
+    {{- $clusterCfg := dict "kind" "nats" }}
+    {{- $_ := set $clusterCfg "servers" (list $natsUrl) }}
+    {{- if and .Values.nats.enabled (not $hasExtraCluster) }}{{- $insecure = true }}{{- end }}
+    {{- if $insecure }}{{- $_ := set $clusterCfg "tls" (dict "require_tls" false) }}{{- end }}
+    {{- $_ := set $clusterCfg "allow_insecure_transport" $insecure }}
+    {{- $_ := set $cfg "cluster" $clusterCfg }}
+  {{- else if (include "mcpg.redisAvailable" .) }}
+    {{- $redisUrl := (include "mcpg.redisUrl" .) }}
+    {{- $clusterCfg := dict "kind" "redis" "url" $redisUrl "key_prefix" "mcpg:cluster:" }}
+    {{- if and .Values.redis.enabled (not ((.Values.redis.tls).enabled)) (not $hasExtraCluster) }}{{- $insecure = true }}{{- end }}
+    {{- $_ := set $clusterCfg "allow_insecure_transport" $insecure }}
+    {{- $_ := set $cfg "cluster" $clusterCfg }}
+  {{- end }}
+{{- end }}
+
+{{- /* ---- Merge extraConfig last (highest precedence) ---- */ -}}
+{{- if .Values.extraConfig }}
+  {{- $cfg = merge .Values.extraConfig $cfg }}
+{{- end }}
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "mcpg.fullname" . }}
+  labels:
+    {{- include "mcpg.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    {{- toYaml $cfg | nindent 4 }}

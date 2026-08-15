@@ -1,0 +1,16 @@
+# Thin shim: the charts repo publishes on every push to main, because several
+# independently-versioned charts share it and no single tag would identify one.
+# The shared workflow skips any chart version the registry already has.
+name: Release
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: write
+  id-token: write
+  packages: write
+jobs:
+  release:
+    uses: mcpg-dev/.github/.github/workflows/release-chart.yml@main
+    secrets: inherit

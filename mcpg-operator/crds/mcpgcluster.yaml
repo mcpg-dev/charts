@@ -1,0 +1,202 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: mcpgclusters.mcpg.dev
+spec:
+  group: mcpg.dev
+  names:
+    categories: []
+    kind: MCPGCluster
+    plural: mcpgclusters
+    shortNames:
+    - mcpgc
+    singular: mcpgcluster
+  scope: Cluster
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.backend
+      name: Backend
+      type: string
+    - jsonPath: .status.boundGateways
+      name: Gateways
+      type: integer
+    - jsonPath: .status.conditions[?(@.type=='Ready')].status
+      name: Ready
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: Auto-generated derived type for MCPGClusterSpec via `CustomResource`
+        properties:
+          spec:
+            description: |-
+              Cluster-coordination backend binding.
+              Cluster-scoped coordination-backend binding. Gateways reference
+              it via `spec.clusterRef`; the operator injects the rendered
+              `cluster:` config block (and the matching cluster cdylib entry)
+              into each bound gateway's config.
+            properties:
+              backend:
+                default: single_node
+                description: Which coordination backend this cluster provides.
+                enum:
+                - single_node
+                - redis
+                - nats
+                - consul
+                - etcd
+                type: string
+              config:
+                additionalProperties: true
+                description: |-
+                  Per-backend configuration, rendered verbatim into the
+                  gateway's `cluster:` block alongside `kind:` (the gateway
+                  flattens these — e.g. `url`, `key_prefix` for redis;
+                  `servers`, `bucket` for nats). Schema-blind: the gateway's
+                  own validator is the source of truth. Ignored for
+                  `single_node`.
+                type: object
+              credentialRefs:
+                description: |-
+                  Optional secret references whose keys are surfaced to the
+                  gateway as `${cluster.<key>}` config-substitution values —
+                  e.g. a Redis password or NATS credentials file. The operator
+                  projects these into the gateway pod the same way plugin
+                  Secrets are projected; the gateway resolves the `cred://`
+                  reference at config-load time. Keeps backend credentials out
+                  of the (world-readable) `MCPGCluster` spec.
+                items:
+                  description: |-
+                    A backend credential projected into bound gateway pods. The
+                    `secretName` lives in the operator's namespace (same trust
+                    boundary as plugin signing keys); `key` selects the entry.
+                  properties:
+                    key:
+                      description: Key within the Secret. Defaults to `name`.
+                      nullable: true
+                      type: string
+                    name:
+                      description: |-
+                        Logical name the gateway config references (e.g. `password`).
+                        Surfaced as `cred://cluster/<name>` to the gateway.
+                      type: string
+                    secretName:
+                      description: Secret name in the operator namespace.
+                      type: string
+                  required:
+                  - name
+                  - secretName
+                  type: object
+                type: array
+              pluginRef:
+                description: |-
+                  Optional reference to the cluster cdylib's OCI source via a
+                  cluster-scoped `MCPGPlugin`. When set, the operator requires
+                  the named plugin to be `Ready` (verified + not revoked)
+                  before binding — so a coordinator can't come up against an
+                  unverified cluster plugin. When unset, the operator assumes
+                  the gateway's `pluginSetRef` already supplies the
+                  `dev.mcpg.cluster.<backend>` cdylib and only renders the
+                  `cluster:` config block.
+                nullable: true
+                properties:
+                  name:
+                    type: string
+                required:
+                - name
+                type: object
+            type: object
+          status:
+            description: Observed state for `MCPGCluster`.
+            nullable: true
+            properties:
+              boundGateways:
+                description: |-
+                  Count of `MCPGGateway`s currently bound to this cluster via
+                  `spec.clusterRef`. Lets ops see blast radius before editing.
+                format: int64
+                nullable: true
+                type: integer
+              conditions:
+                description: |-
+                  Standard `metav1.Condition[]`. The operator sets `Ready=True`
+                  when the backend is bindable (plugin verified when
+                  `pluginRef` is set; always for `single_node`).
+                items:
+                  description: |-
+                    One status condition. Serde shape matches K8s
+                    `metav1.Condition` exactly so generic tooling (kubectl,
+                    kustomize, Argo CD) interprets it correctly.
+                  properties:
+                    lastTransitionTime:
+                      description: RFC3339 timestamp of the most recent transition.
+                      format: date-time
+                      type: string
+                    message:
+                      description: Free-text human-readable detail. May be empty.
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        `metadata.generation` the controller had observed when
+                        it set this condition. Lets clients detect stale status.
+                      format: int64
+                      nullable: true
+                      type: integer
+                    reason:
+                      description: |-
+                        CamelCase enum the operator defines per controller.
+                        E.g. `AllReplicasAvailable`, `DependencyPending`,
+                        `SignatureMismatch`.
+                      type: string
+                    status:
+                      description: |-
+                        `"True"`, `"False"`, or `"Unknown"`. K8s convention is to
+                        keep this as a string (not a bool) so `Unknown` is
+                        representable.
+                      type: string
+                    type:
+                      description: |-
+                        `Ready`, `Reconciling`, `Available`, `Degraded`,
+                        `Progressing`, `Failed`, plus per-CRD types.
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              configHash:
+                description: |-
+                  SHA-256 of the rendered `cluster:` config block. Bound
+                  gateways fold this into their pod-roll hash, so a cluster
+                  config edit rolls every bound gateway.
+                nullable: true
+                type: string
+              lastReconcileTime:
+                format: date-time
+                nullable: true
+                type: string
+              observedGeneration:
+                format: int64
+                nullable: true
+                type: integer
+              pluginId:
+                description: |-
+                  The resolved cluster cdylib plugin id (`None`/absent for
+                  `single_node`). Surfaced so ops can confirm the backend
+                  mapping without reading the spec enum.
+                nullable: true
+                type: string
+            type: object
+        required:
+        - spec
+        title: MCPGCluster
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

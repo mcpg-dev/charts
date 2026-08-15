@@ -1,0 +1,41 @@
+apiVersion: v2
+name: mcpg-operator
+description: |
+  Kubernetes operator for managing MCPG (Model Context Protocol
+  Gateway) deployments. Reconciles MCPGGateway custom resources
+  into Deployment + Service + ConfigMap + ServiceAccount.
+
+  See docs/k8s-operator/ for the full design + roadmap.
+
+# Chart version (independent of the operator binary version).
+# Bumped on every chart-shape change.
+version: 0.1.0-beta.11
+
+# Operator binary version this chart is paired with (rendered
+# into the Deployment's image tag when the user doesn't override).
+appVersion: 1.0.0-dev.19
+
+type: application
+icon: https://mcpg.dev/icon.png
+home: https://mcpg.dev
+sources:
+  - https://github.com/mcpg-dev/source-code
+
+keywords:
+  - kubernetes
+  - operator
+  - mcpg
+  - mcp
+  - model-context-protocol
+  - gateway
+
+annotations:
+  artifacthub.io/changes: |
+    - kind: added
+      description: Initial M0 release — MCPGGateway controller, admission webhook, metrics + healthz endpoints.
+  artifacthub.io/license: Apache-2.0
+
+maintainers:
+  - name: MCPG contributors
+    email: opensource@mcpg.dev
+    url: https://mcpg.dev

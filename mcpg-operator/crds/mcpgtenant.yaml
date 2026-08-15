@@ -1,0 +1,252 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: mcpgtenants.mcpg.dev
+spec:
+  group: mcpg.dev
+  names:
+    categories: []
+    kind: MCPGTenant
+    plural: mcpgtenants
+    shortNames:
+    - mcpgt
+    singular: mcpgtenant
+  scope: Cluster
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.boundNamespaces[*]
+      name: Namespaces
+      type: integer
+    - jsonPath: .status.observed.gateways
+      name: Gateways
+      type: integer
+    - jsonPath: .status.conditions[?(@.type=='Ready')].status
+      name: Ready
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: Auto-generated derived type for MCPGTenantSpec via `CustomResource`
+        properties:
+          spec:
+            description: |-
+              Declarative, cluster-admin-owned tenant boundary.
+              Cluster-scoped tenant boundary referencing existing namespaces.
+            properties:
+              allowedPlugins:
+                description: |-
+                  Plugin allowlist. `MCPGPluginSet`s in this tenant's namespaces
+                  may only reference cluster `MCPGPlugin`s matching one of these.
+
+                  - Empty list = **deny-all** (a tenant must explicitly opt in).
+                  - A single entry `{name: "*"}` = any cluster plugin.
+
+                  Each entry matches when EITHER its `name` equals the plugin's
+                  resource name / capability id, OR the plugin's OCI `image`
+                  starts with `registryPrefix`.
+                items:
+                  description: |-
+                    One plugin-allowlist matcher. At least one of `name` /
+                    `registryPrefix` should be set; an entry with neither matches
+                    nothing (and is rejected at admission).
+                  properties:
+                    name:
+                      description: |-
+                        Match by the `MCPGPlugin` resource name or the plugin
+                        capability id (e.g. `identity-workload` or
+                        `dev.mcpg.identity.workload`). The literal `*` matches any
+                        plugin.
+                      nullable: true
+                      type: string
+                    registryPrefix:
+                      description: |-
+                        Match when the referenced plugin's OCI `image` starts with this
+                        prefix (e.g. `ghcr.io/mcpg-dev/source-code/plugins/`).
+
+                        A literal `starts_with` on the resolved image, so the prefix must
+                        carry every path segment of the references it is meant to admit.
+                        This is an ALLOWLIST, so a prefix that stops matching fails CLOSED
+                        (the plugin is denied) — unlike MCPGPluginMirror's
+                        `upstream.namespace`, where the same drift fails open.
+
+                        If the base a plugin is published under gains or loses a path
+                        segment — `ghcr.io/mcpg-dev/source-code/plugins/` is five
+                        segments, `ghcr.io/mcpg-dev/plugins/` is four — every MCPGTenant
+                        in the cluster needs this field updated in the same change, or
+                        its tenants lose access to first-party plugins.
+                      nullable: true
+                      type: string
+                  type: object
+                type: array
+              identityAttribute:
+                description: |-
+                  Optional. The identity attribute the operator stamps into the
+                  gateway's runtime `tool_access` policy so a tenant's gateways and
+                  routes share one identity boundary. When unset, `MCPGTenant`
+                  performs no gateway-config rendering at all (pure RBAC + admission
+                  object).
+                nullable: true
+                properties:
+                  key:
+                    description: Attribute key. Conventionally `tenant`.
+                    type: string
+                  value:
+                    description: Attribute value identifying this tenant (e.g. the tenant name).
+                    type: string
+                required:
+                - key
+                - value
+                type: object
+              namespaces:
+                description: |-
+                  Namespaces this tenant owns. Per-namespace RBAC, the generated
+                  `ResourceQuota`, the plugin allowlist, and the replica cap apply
+                  to exactly these. Namespaces are EXCLUSIVELY owned — a namespace
+                  may belong to at most one `MCPGTenant` (admission rejects
+                  overlap). The operator does **not** create these namespaces; it
+                  references existing ones.
+                items:
+                  type: string
+                type: array
+              quotas:
+                description: |-
+                  Hard quotas, enforced synchronously (replica cap at admission;
+                  counts via a generated per-namespace `ResourceQuota`). Unset =
+                  no quota.
+                nullable: true
+                properties:
+                  maxGateways:
+                    description: |-
+                      Max `MCPGGateway`s per owned namespace (count quota →
+                      `ResourceQuota`).
+                    format: int64
+                    nullable: true
+                    type: integer
+                  maxPluginSets:
+                    description: Max `MCPGPluginSet`s per owned namespace.
+                    format: int64
+                    nullable: true
+                    type: integer
+                  maxReplicasPerGateway:
+                    description: |-
+                      Per-gateway replica ceiling. A *field* constraint (not a count),
+                      so it has no admission race and is webhook-only.
+                    format: int64
+                    nullable: true
+                    type: integer
+                  maxRoutes:
+                    description: Max `MCPGRoute`s per owned namespace.
+                    format: int64
+                    nullable: true
+                    type: integer
+                type: object
+            required:
+            - namespaces
+            type: object
+          status:
+            description: Observed state for `MCPGTenant`.
+            nullable: true
+            properties:
+              boundNamespaces:
+                description: |-
+                  Namespaces the operator successfully bound (exist + labelled +
+                  RBAC/quota applied). A subset of `spec.namespaces` when some are
+                  missing.
+                items:
+                  type: string
+                type: array
+              conditions:
+                description: |-
+                  Standard `metav1.Condition[]`. Notable types:
+                  - `Ready` — RBAC + `ResourceQuota` materialised for all bound
+                    namespaces.
+                  - `NamespacesBound` — every `spec.namespaces` exists and is
+                    labelled `mcpg.dev/tenant=<name>`.
+                  - `QuotaWithinLimits` — `False` (soft signal, not a gate) when an
+                    owned namespace already holds more resources than the quota
+                    allows; the generated `ResourceQuota` still admits the existing
+                    objects and blocks only new ones.
+                items:
+                  description: |-
+                    One status condition. Serde shape matches K8s
+                    `metav1.Condition` exactly so generic tooling (kubectl,
+                    kustomize, Argo CD) interprets it correctly.
+                  properties:
+                    lastTransitionTime:
+                      description: RFC3339 timestamp of the most recent transition.
+                      format: date-time
+                      type: string
+                    message:
+                      description: Free-text human-readable detail. May be empty.
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        `metadata.generation` the controller had observed when
+                        it set this condition. Lets clients detect stale status.
+                      format: int64
+                      nullable: true
+                      type: integer
+                    reason:
+                      description: |-
+                        CamelCase enum the operator defines per controller.
+                        E.g. `AllReplicasAvailable`, `DependencyPending`,
+                        `SignatureMismatch`.
+                      type: string
+                    status:
+                      description: |-
+                        `"True"`, `"False"`, or `"Unknown"`. K8s convention is to
+                        keep this as a string (not a bool) so `Unknown` is
+                        representable.
+                      type: string
+                    type:
+                      description: |-
+                        `Ready`, `Reconciling`, `Available`, `Degraded`,
+                        `Progressing`, `Failed`, plus per-CRD types.
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              lastReconcileTime:
+                format: date-time
+                nullable: true
+                type: string
+              observed:
+                description: |-
+                  Observed counts across owned namespaces. Observability only —
+                  **never** the enforcement point for quota (that's the generated
+                  `ResourceQuota`).
+                nullable: true
+                properties:
+                  gateways:
+                    default: 0
+                    format: int64
+                    type: integer
+                  pluginSets:
+                    default: 0
+                    format: int64
+                    type: integer
+                  routes:
+                    default: 0
+                    format: int64
+                    type: integer
+                type: object
+              observedGeneration:
+                format: int64
+                nullable: true
+                type: integer
+            type: object
+        required:
+        - spec
+        title: MCPGTenant
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

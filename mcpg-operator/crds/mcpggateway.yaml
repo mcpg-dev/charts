@@ -1,0 +1,707 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: mcpggateways.mcpg.dev
+spec:
+  group: mcpg.dev
+  names:
+    categories: []
+    kind: MCPGGateway
+    plural: mcpggateways
+    shortNames:
+    - mcpgw
+    singular: mcpggateway
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.image.tag
+      name: Image
+      type: string
+    - jsonPath: .spec.replicas
+      name: Replicas
+      type: integer
+    - jsonPath: .spec.pluginSetRef.name
+      name: Plugins
+      type: string
+    - jsonPath: .status.conditions[?(@.type=='Ready')].status
+      name: Ready
+      type: string
+    - jsonPath: .status.conditions[?(@.type=='Available')].status
+      name: Available
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: Auto-generated derived type for MCPGGatewaySpec via `CustomResource`
+        properties:
+          spec:
+            description: |-
+              Desired state for a tenant's `MCPGGateway`.
+
+              The operator's gateway controller renders this into a
+              Deployment + Service + ConfigMap (+ optional Ingress,
+              NetworkPolicy, PDB, ServiceMonitor) and reconciles them into
+              the gateway's namespace. Every field maps either directly to
+              a Kubernetes shape or to a gateway-config key that lands in
+              the rendered ConfigMap.
+
+              Cross-cutting fields (`pluginSetRef`, `revocationListRef`)
+              pull in resources from the cluster-level plugin lifecycle —
+              see [`crate::v1alpha1::MCPGPluginSet`] and
+              [`crate::v1alpha1::MCPGRevocationList`].
+            properties:
+              acceptedRouteNamespaces:
+                description: |-
+                  Soft-tenancy allow-list: namespaces permitted to attach an
+                  `MCPGRoute` to this gateway. A route in a namespace NOT listed
+                  here is rejected at admission (and ignored by the route
+                  controller). Empty/unset ⇒ this gateway accepts no external
+                  routes (routes in the gateway's own namespace are always
+                  allowed). This is the platform team's explicit opt-in to which
+                  tenant namespaces may share the gateway.
+                items:
+                  type: string
+                type: array
+              autoscaling:
+                description: |-
+                  Optional HPA shape. When `enabled = true` the operator renders
+                  an `autoscaling/v2.HorizontalPodAutoscaler` targeting the
+                  gateway Deployment. Disabled by default — `replicas` is the
+                  canonical knob for most users.
+                nullable: true
+                properties:
+                  enabled:
+                    default: false
+                    type: boolean
+                  maxReplicas:
+                    format: int32
+                    nullable: true
+                    type: integer
+                  metrics:
+                    items:
+                      properties:
+                        external:
+                          type: object
+                          x-kubernetes-preserve-unknown-fields: true
+                        object:
+                          type: object
+                          x-kubernetes-preserve-unknown-fields: true
+                        pods:
+                          type: object
+                          x-kubernetes-preserve-unknown-fields: true
+                        resource:
+                          type: object
+                          x-kubernetes-preserve-unknown-fields: true
+                        type:
+                          type: string
+                      required:
+                      - type
+                      type: object
+                    type: array
+                  minReplicas:
+                    format: int32
+                    nullable: true
+                    type: integer
+                type: object
+              cloud:
+                description: |-
+                  Managed-fleet (mcpg.cloud) routing + identity. Present only on
+                  Cloud-provisioned gateways; absent for self-host, where a CR renders
+                  byte-identical to before. Consumed by the deploy-spine HTTPRoute
+                  renderer + the resource-metadata injector.
+                nullable: true
+                properties:
+                  customDomains:
+                    description: |-
+                      Additional customer-owned hostnames (CNAME -> the instance edge); each
+                      gets its own HTTPRoute host match + TLS certificate.
+                    items:
+                      type: string
+                    type: array
+                  externalUrl:
+                    description: |-
+                      Canonical external URL (`https://{instanceSlug}.mcpg.cloud/mcp`). The
+                      operator injects this into `governance.access.resource_metadata.resource`
+                      so OAuth resource-indicator validation works; never trusted from a
+                      published config.
+                    type: string
+                  instanceSlug:
+                    description: |-
+                      Globally-unique instance slug — the public DNS label addressing the
+                      gateway at `{instanceSlug}.mcpg.cloud/mcp`. Drives the HTTPRoute host
+                      match + per-instance resource naming.
+                    type: string
+                  orgSlug:
+                    description: Tenant/org slug — billing + console grouping.
+                    type: string
+                required:
+                - externalUrl
+                - instanceSlug
+                - orgSlug
+                type: object
+              clusterRef:
+                description: |-
+                  Reference to a cluster-scoped `MCPGCluster`. When set, the
+                  operator renders that backend's `cluster:` config block into
+                  this gateway's config (and folds the cluster's config-hash
+                  into the pod-roll trigger), so every replica binds the same
+                  coordinator. When unset the gateway runs `single_node`
+                  (in-process) — correct only for a single replica.
+                nullable: true
+                properties:
+                  name:
+                    description: Cluster-scoped `MCPGCluster` resource name.
+                    type: string
+                required:
+                - name
+                type: object
+              config:
+                type: object
+                x-kubernetes-preserve-unknown-fields: true
+              image:
+                description: |-
+                  Container image coordinates for the rendered gateway pod.
+                  All three fields default at reconcile time — `repository`
+                  from operator config, `tag` from the chart's appVersion,
+                  `pullPolicy` to `IfNotPresent`.
+                properties:
+                  pullPolicy:
+                    nullable: true
+                    type: string
+                  repository:
+                    nullable: true
+                    type: string
+                  tag:
+                    nullable: true
+                    type: string
+                type: object
+              imagePullSecrets:
+                items:
+                  description: |-
+                    Same shape as `core/v1.LocalObjectReference`. Used wherever
+                    the spec needs to point at another in-namespace resource —
+                    imagePullSecrets, plugin refs, etc.
+                  properties:
+                    name:
+                      type: string
+                  required:
+                  - name
+                  type: object
+                type: array
+              ingress:
+                nullable: true
+                properties:
+                  annotations:
+                    additionalProperties:
+                      type: string
+                    type: object
+                  hosts:
+                    items:
+                      properties:
+                        host:
+                          type: string
+                        paths:
+                          items:
+                            properties:
+                              path:
+                                type: string
+                              pathType:
+                                type: string
+                            required:
+                            - path
+                            - pathType
+                            type: object
+                          type: array
+                      required:
+                      - host
+                      - paths
+                      type: object
+                    type: array
+                  ingressClassName:
+                    type: string
+                  tls:
+                    items:
+                      properties:
+                        hosts:
+                          items:
+                            type: string
+                          type: array
+                        secretName:
+                          type: string
+                      required:
+                      - hosts
+                      - secretName
+                      type: object
+                    type: array
+                required:
+                - ingressClassName
+                type: object
+              monitoring:
+                description: |-
+                  Toggles ServiceMonitor + PrometheusRule rendering. Both
+                  require the cluster to have the Prometheus Operator CRDs
+                  installed; the operator will skip rendering if the API
+                  group is absent (and surface a degraded status).
+                nullable: true
+                properties:
+                  prometheusRule:
+                    description: |-
+                      Knobs for the rendered PrometheusRule. `severity` is
+                      stamped on every alert in the rendered group; defaults to
+                      `warning`.
+                    nullable: true
+                    properties:
+                      enabled:
+                        default: false
+                        type: boolean
+                      severity:
+                        nullable: true
+                        type: string
+                    type: object
+                  serviceMonitor:
+                    description: |-
+                      Knobs for the rendered ServiceMonitor. `interval` /
+                      `scrapeTimeout` follow Prometheus duration syntax (`30s`,
+                      `1m`).
+                    nullable: true
+                    properties:
+                      enabled:
+                        default: false
+                        type: boolean
+                      interval:
+                        nullable: true
+                        type: string
+                      labels:
+                        additionalProperties:
+                          type: string
+                        type: object
+                      scrapeTimeout:
+                        nullable: true
+                        type: string
+                    type: object
+                type: object
+              networkPolicy:
+                description: |-
+                  Toggles whether the operator renders a NetworkPolicy alongside
+                  the gateway Deployment. The default policy denies all
+                  ingress/egress except the gateway listen port +
+                  management traffic; `extraIngressFrom` / `extraEgressTo`
+                  supply caller-specific exceptions (e.g. database egress).
+                nullable: true
+                properties:
+                  enabled:
+                    default: false
+                    type: boolean
+                  extraEgressTo:
+                    items:
+                      type: object
+                      x-kubernetes-preserve-unknown-fields: true
+                    type: array
+                  extraIngressFrom:
+                    items:
+                      type: object
+                      x-kubernetes-preserve-unknown-fields: true
+                    type: array
+                type: object
+              pluginSetRef:
+                description: |-
+                  Reference to a `MCPGPluginSet` in the same namespace.
+                  When set, the gateway pod's projected volume includes the
+                  resolved per-plugin Secrets, and `plugins[]` in the
+                  rendered config is sourced from the set. Optional —
+                  gateways without a plugin set boot with whatever lives in
+                  `spec.config.plugins[]`.
+                nullable: true
+                properties:
+                  name:
+                    description: |-
+                      `MCPGPluginSet` resource name, in the same namespace as
+                      the gateway.
+                    type: string
+                required:
+                - name
+                type: object
+              podAnnotations:
+                additionalProperties:
+                  type: string
+                type: object
+              podDisruptionBudget:
+                description: |-
+                  Wraps `policy/v1.PodDisruptionBudgetSpec`. Both threshold
+                  fields are int-or-string to mirror the upstream API; pass
+                  either `"50%"` or `2`.
+                nullable: true
+                properties:
+                  enabled:
+                    default: false
+                    type: boolean
+                  maxUnavailable:
+                    nullable: true
+                    x-kubernetes-int-or-string: true
+                  minAvailable:
+                    nullable: true
+                    x-kubernetes-int-or-string: true
+                type: object
+              podLabels:
+                additionalProperties:
+                  type: string
+                type: object
+              probes:
+                description: |-
+                  Optional per-probe overrides. When `None`, the operator's
+                  rendered Deployment uses the chart defaults (which target
+                  `/healthz` + `/readyz` on the management port).
+                nullable: true
+                properties:
+                  liveness:
+                    description: |-
+                      Per-probe knobs. Maps directly to `core/v1.Probe` minus the
+                      handler — handler is always HTTP GET on the management port
+                      for the gateway (see the rendered Deployment template).
+                    nullable: true
+                    properties:
+                      failureThreshold:
+                        format: int32
+                        nullable: true
+                        type: integer
+                      initialDelaySeconds:
+                        format: int32
+                        nullable: true
+                        type: integer
+                      path:
+                        nullable: true
+                        type: string
+                      periodSeconds:
+                        format: int32
+                        nullable: true
+                        type: integer
+                      successThreshold:
+                        format: int32
+                        nullable: true
+                        type: integer
+                      timeoutSeconds:
+                        format: int32
+                        nullable: true
+                        type: integer
+                    type: object
+                  readiness:
+                    description: |-
+                      Per-probe knobs. Maps directly to `core/v1.Probe` minus the
+                      handler — handler is always HTTP GET on the management port
+                      for the gateway (see the rendered Deployment template).
+                    nullable: true
+                    properties:
+                      failureThreshold:
+                        format: int32
+                        nullable: true
+                        type: integer
+                      initialDelaySeconds:
+                        format: int32
+                        nullable: true
+                        type: integer
+                      path:
+                        nullable: true
+                        type: string
+                      periodSeconds:
+                        format: int32
+                        nullable: true
+                        type: integer
+                      successThreshold:
+                        format: int32
+                        nullable: true
+                        type: integer
+                      timeoutSeconds:
+                        format: int32
+                        nullable: true
+                        type: integer
+                    type: object
+                  startup:
+                    description: |-
+                      Per-probe knobs. Maps directly to `core/v1.Probe` minus the
+                      handler — handler is always HTTP GET on the management port
+                      for the gateway (see the rendered Deployment template).
+                    nullable: true
+                    properties:
+                      failureThreshold:
+                        format: int32
+                        nullable: true
+                        type: integer
+                      initialDelaySeconds:
+                        format: int32
+                        nullable: true
+                        type: integer
+                      path:
+                        nullable: true
+                        type: string
+                      periodSeconds:
+                        format: int32
+                        nullable: true
+                        type: integer
+                      successThreshold:
+                        format: int32
+                        nullable: true
+                        type: integer
+                      timeoutSeconds:
+                        format: int32
+                        nullable: true
+                        type: integer
+                    type: object
+                type: object
+              replicas:
+                default: 1
+                format: int32
+                type: integer
+              resources:
+                description: |-
+                  Maps directly to `core/v1.ResourceRequirements`. We carry our
+                  own type rather than depending on `k8s-openapi` here because
+                  `operator-api` is `k8s-openapi`-version-agnostic — see the
+                  crate-level docs.
+                nullable: true
+                properties:
+                  limits:
+                    additionalProperties:
+                      type: string
+                    type: object
+                  requests:
+                    additionalProperties:
+                      type: string
+                    type: object
+                type: object
+              revocationListRef:
+                description: |-
+                  Reference to a cluster-scoped `MCPGRevocationList`. Defaults
+                  to the operator's `cluster-default` resource when unset.
+                  The operator materialises the revocation list into the
+                  gateway's namespace and mounts it; gateway pods enforce
+                  at plugin-load time.
+                nullable: true
+                properties:
+                  name:
+                    description: Cluster-scoped `MCPGRevocationList` resource name.
+                    type: string
+                required:
+                - name
+                type: object
+              scheduling:
+                description: |-
+                  Pod-scheduling pass-through fields. Each maps directly to
+                  the matching `PodSpec` field; the operator does not interpret
+                  them. `tolerations` and `affinity` are
+                  `x-kubernetes-preserve-unknown-fields` so we don't have to
+                  version-shift the operator's `k8s-openapi` dependency every
+                  time upstream adds a knob.
+                nullable: true
+                properties:
+                  affinity:
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
+                  nodeSelector:
+                    additionalProperties:
+                      type: string
+                    type: object
+                  priorityClassName:
+                    nullable: true
+                    type: string
+                  terminationGracePeriodSeconds:
+                    format: int64
+                    nullable: true
+                    type: integer
+                  tolerations:
+                    items:
+                      type: object
+                      x-kubernetes-preserve-unknown-fields: true
+                    type: array
+                  topologySpreadConstraints:
+                    items:
+                      properties:
+                        labelSelectorMatchLabels:
+                          additionalProperties:
+                            type: string
+                          type: object
+                        maxSkew:
+                          format: int32
+                          type: integer
+                        topologyKey:
+                          type: string
+                        whenUnsatisfiable:
+                          type: string
+                      required:
+                      - maxSkew
+                      - topologyKey
+                      - whenUnsatisfiable
+                      type: object
+                    type: array
+                type: object
+              service:
+                nullable: true
+                properties:
+                  annotations:
+                    additionalProperties:
+                      type: string
+                    type: object
+                  port:
+                    format: int32
+                    nullable: true
+                    type: integer
+                  type:
+                    nullable: true
+                    type: string
+                type: object
+              workloadIdentity:
+                description: |-
+                  One-of: pick exactly one cloud provider. The operator
+                  translates the chosen variant into the right ServiceAccount
+                  annotations / projected-volume mounts at render time.
+                  Multiple variants set simultaneously is an admission error.
+                nullable: true
+                properties:
+                  aws:
+                    nullable: true
+                    properties:
+                      iamRoleArn:
+                        type: string
+                    required:
+                    - iamRoleArn
+                    type: object
+                  azure:
+                    nullable: true
+                    properties:
+                      clientId:
+                        type: string
+                    required:
+                    - clientId
+                    type: object
+                  gcp:
+                    nullable: true
+                    properties:
+                      googleServiceAccount:
+                        type: string
+                    required:
+                    - googleServiceAccount
+                    type: object
+                  spiffe:
+                    nullable: true
+                    properties:
+                      svid:
+                        type: string
+                      trustDomain:
+                        type: string
+                    required:
+                    - svid
+                    - trustDomain
+                    type: object
+                type: object
+            required:
+            - config
+            - image
+            type: object
+          status:
+            description: |-
+              Observed state for `MCPGGateway`. `conditions` is the
+              authoritative readiness signal; the hash fields let
+              operators verify "the right plugin set / revocation list
+              has actually been folded in".
+            nullable: true
+            properties:
+              availableReplicas:
+                format: int32
+                nullable: true
+                type: integer
+              conditions:
+                items:
+                  description: |-
+                    One status condition. Serde shape matches K8s
+                    `metav1.Condition` exactly so generic tooling (kubectl,
+                    kustomize, Argo CD) interprets it correctly.
+                  properties:
+                    lastTransitionTime:
+                      description: RFC3339 timestamp of the most recent transition.
+                      format: date-time
+                      type: string
+                    message:
+                      description: Free-text human-readable detail. May be empty.
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        `metadata.generation` the controller had observed when
+                        it set this condition. Lets clients detect stale status.
+                      format: int64
+                      nullable: true
+                      type: integer
+                    reason:
+                      description: |-
+                        CamelCase enum the operator defines per controller.
+                        E.g. `AllReplicasAvailable`, `DependencyPending`,
+                        `SignatureMismatch`.
+                      type: string
+                    status:
+                      description: |-
+                        `"True"`, `"False"`, or `"Unknown"`. K8s convention is to
+                        keep this as a string (not a bool) so `Unknown` is
+                        representable.
+                      type: string
+                    type:
+                      description: |-
+                        `Ready`, `Reconciling`, `Available`, `Degraded`,
+                        `Progressing`, `Failed`, plus per-CRD types.
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              configHash:
+                description: |-
+                  SHA-256 of the rendered config — flips on any spec change
+                  that propagates to the pod template. Operators watch this
+                  to confirm "operator has applied my edit".
+                nullable: true
+                type: string
+              lastReconcileTime:
+                format: date-time
+                nullable: true
+                type: string
+              observedGeneration:
+                format: int64
+                nullable: true
+                type: integer
+              pluginSetHash:
+                description: |-
+                  Resolved hash of the active `MCPGPluginSet` — non-null when
+                  `spec.pluginSetRef` is set + the set is `Ready`.
+                nullable: true
+                type: string
+              readyReplicas:
+                format: int32
+                nullable: true
+                type: integer
+              replicas:
+                format: int32
+                nullable: true
+                type: integer
+              revocationListHash:
+                description: |-
+                  Hash of the active `MCPGRevocationList`'s materialised
+                  content. Lets operators verify "every gateway is on the
+                  same revocation rev" cluster-wide.
+                nullable: true
+                type: string
+              updatedReplicas:
+                format: int32
+                nullable: true
+                type: integer
+            type: object
+        required:
+        - spec
+        title: MCPGGateway
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

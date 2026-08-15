@@ -1,0 +1,18 @@
+{{- if .Values.grafanaDashboard.enabled }}
+# Grafana dashboard JSON for the MCPG operator. Mounted as a
+# `grafana_dashboard: "1"` labelled ConfigMap so the
+# kube-prometheus-stack Grafana sidecar auto-loads it.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "mcpg-operator.fullname" . }}-dashboard
+  namespace: {{ default (include "mcpg-operator.namespace" .) .Values.grafanaDashboard.namespace }}
+  labels:
+    {{- include "mcpg-operator.labels" . | nindent 4 }}
+    {{- with .Values.grafanaDashboard.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+data:
+  mcpg-operator.json: |
+    {{- .Files.Get "files/grafana-dashboard.json" | nindent 4 }}
+{{- end }}

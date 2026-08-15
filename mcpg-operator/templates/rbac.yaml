@@ -1,0 +1,268 @@
+{{- if .Values.rbac.create }}
+# Operator's ClusterRole. Scoped to operator-owned
+# CRDs + their child resources only. No wildcard verbs /
+# resources. Verb set is the minimum each path needs:
+# - SSA writes use `patch` (create implicit through `apply`).
+# - `update` only where a strategic-merge / non-SSA patch is the
+#   right tool (status subresource on the apiserver default).
+# - `delete` only where owner-ref GC isn't sufficient.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "mcpg-operator.fullname" . }}
+  labels:
+    {{- include "mcpg-operator.labels" . | nindent 4 }}
+rules:
+  # Operator-owned CRDs. The operator manages spec only on the
+  # MCPGRevocationList default-list bootstrap path; all other
+  # spec writes come from users. So `create` here covers
+  # cluster-default seeding; `delete` is the user-driven path.
+  - apiGroups: ["mcpg.dev"]
+    resources:
+      - mcpggateways
+      - mcpgplugins
+      - mcpgpluginsets
+      - mcpgrevocationlists
+      - mcpgclusters
+      - mcpgroutes
+      - mcpgpluginmirrors
+      - mcpgtenants
+      - mcpgservers
+    verbs: ["get", "list", "watch", "create", "patch", "delete"]
+  # Status subresource — the apiserver's default merge isn't SSA,
+  # so we keep `update` here. `patch` is also kept for SSA-status
+  # writes on apiservers that route status through the SSA path.
+  - apiGroups: ["mcpg.dev"]
+    resources:
+      - mcpggateways/status
+      - mcpgplugins/status
+      - mcpgpluginsets/status
+      - mcpgrevocationlists/status
+      - mcpgclusters/status
+      - mcpgroutes/status
+      - mcpgpluginmirrors/status
+      - mcpgtenants/status
+      - mcpgservers/status
+    verbs: ["get", "update", "patch"]
+  # Finalizer subresource — RBAC requires this be a separate
+  # rule from the spec write because finalizer mutation is
+  # special-cased in K8s admission. Verb is `update`; we don't
+  # `patch` finalizers (kube-rs's helper uses merge-patch, which
+  # is `patch`, but the apiserver also accepts the `update` verb
+  # on /finalizers — keep both for forward-compat).
+  - apiGroups: ["mcpg.dev"]
+    resources:
+      - mcpggateways/finalizers
+      - mcpgplugins/finalizers
+      - mcpgpluginsets/finalizers
+      - mcpgrevocationlists/finalizers
+      - mcpgclusters/finalizers
+      - mcpgroutes/finalizers
+      - mcpgpluginmirrors/finalizers
+      - mcpgtenants/finalizers
+      - mcpgservers/finalizers
+    verbs: ["update", "patch"]
+
+  # Synthesised children of an MCPGGateway. The operator owns
+  # these end-to-end via SSA + owner refs. `delete` is needed
+  # because the M1.4 prune step explicitly DELETEs stale
+  # per-namespace Secrets that fall out of a plugin set's
+  # entries[]; owner-ref GC alone wouldn't catch those because
+  # the parent MCPGPluginSet is still alive.
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch", "create", "patch"]
+  - apiGroups: [""]
+    resources: ["services", "configmaps", "serviceaccounts"]
+    verbs: ["get", "list", "watch", "create", "patch"]
+  # Opt-in scaling/availability children, rendered only when
+  # `spec.autoscaling.enabled` / `spec.podDisruptionBudget.enabled`.
+  # Owned end-to-end (SSA + owner refs); no delete (owner-ref GC
+  # reaps them with the parent gateway).
+  - apiGroups: ["autoscaling"]
+    resources: ["horizontalpodautoscalers"]
+    verbs: ["get", "list", "watch", "create", "patch"]
+  - apiGroups: ["policy"]
+    resources: ["poddisruptionbudgets"]
+    verbs: ["get", "list", "watch", "create", "patch"]
+  # Plugin Secrets — read-only cluster-wide (S-AUD-01 partial
+  # closure). The reflector behind `controller.owns(Api::Secret::all)`
+  # needs cluster-wide LIST + WATCH; closing this requires a
+  # per-namespace reflector refactor (deferred — tracked in
+  # PRODUCTION_READINESS.md and SECURITY.md §5.2). The cluster-wide
+  # WRITE verbs (`create, patch, delete`) were dropped from this
+  # role; the operator gets writes per-namespace via the
+  # `mcpg-operator-tenant-secrets` ClusterRole bound by per-tenant
+  # RoleBinding (Helm-rendered for the operator's own namespace,
+  # operator-rendered for tenant namespaces).
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch"]
+
+  # Per-tenant RBAC management. The operator dynamically creates
+  # a `mcpg-operator-tenant-secrets` RoleBinding in every namespace
+  # that hosts a `MCPGPluginSet`, granting itself just the verbs
+  # needed to materialise the per-namespace plugin Secret copies.
+  # Cleanup is currently manual (`kubectl delete rolebinding -A
+  # -l app.kubernetes.io/managed-by=mcpg-operator`); finalizer-
+  # driven cleanup is the natural follow-up.
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["rolebindings"]
+    verbs: ["get", "list", "watch", "create", "patch", "delete"]
+
+  # MCPGTenant management. The tenant controller labels
+  # owned namespaces (`mcpg.dev/tenant=<name>`) so admission can
+  # resolve namespace → tenant, and generates a per-namespace
+  # `ResourceQuota` — the race-safe count-quota enforcement (the
+  # admission count-check is only a nicer error). `namespaces` is
+  # patch-only (label stamping); the operator never creates or
+  # deletes namespaces. `resourcequotas` is fully managed.
+  #
+  # mcpg.cloud owner split (do NOT add verbs to "fix" this): in the
+  # managed service the *provisioner* owns the per-tenant namespace
+  # isolation bundle (PSA labels + ResourceQuota + LimitRange +
+  # default-deny/allow NetworkPolicies) and creates it imperatively
+  # pre-CR under field manager `mcpg-provisioner/applier`. That is why
+  # this role intentionally has NO `namespaces:create`, no
+  # `networkpolicies`, and no `limitranges` — adding them would
+  # double-own those objects and flap against the provisioner.
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list", "watch", "patch"]
+  - apiGroups: [""]
+    resources: ["resourcequotas"]
+    verbs: ["get", "list", "watch", "create", "patch", "delete"]
+
+  # Managed-cloud edge wiring (Gateway API). The gateway controller
+  # renders a per-instance HTTPRoute in the tenant namespace, and for
+  # tenant custom domains it server-side-applies per-domain HTTPS
+  # listeners onto the SHARED edge Gateway (per-CR field manager — it
+  # only ever owns its own listener entries) and manages a cert-manager
+  # Certificate per domain in the edge namespace. No delete verb on
+  # gateways: listener removal is an SSA apply of an empty set, never an
+  # object delete.
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources: ["httproutes"]
+    verbs: ["get", "list", "watch", "create", "patch"]
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources: ["gateways"]
+    verbs: ["get", "list", "watch", "patch"]
+  - apiGroups: ["cert-manager.io"]
+    resources: ["certificates"]
+    verbs: ["get", "list", "watch", "create", "patch", "delete"]
+
+  # Leader election. We acquire / renew the lease via patch,
+  # never delete it — the lease object is shared infrastructure.
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "patch"]
+
+  # Events. The legacy core/v1 Event API is the one
+  # `kubectl describe` aggregates by default; the modern
+  # events.k8s.io/v1 API is what kube-rs's Recorder writes to.
+  # Granting both keeps the operator forward-compat with
+  # newer apiservers that disable the legacy alias.
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+  - apiGroups: ["events.k8s.io"]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+
+  # Admission webhook config + CRD discovery for self-introspection.
+  # Read-only — the operator never mutates these (they're
+  # installed by Helm).
+  - apiGroups: ["admissionregistration.k8s.io"]
+    resources: ["validatingwebhookconfigurations", "mutatingwebhookconfigurations"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["get", "list", "watch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "mcpg-operator.fullname" . }}
+  labels:
+    {{- include "mcpg-operator.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "mcpg-operator.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "mcpg-operator.serviceAccountName" . }}
+    namespace: {{ include "mcpg-operator.namespace" . }}
+
+---
+# Tenant ClusterRole — Secret WRITES, bound per-namespace via
+# RoleBindings (S-AUD-01 closure for the write half). The
+# ClusterRole has no ClusterRoleBinding here; the operator
+# creates a RoleBinding pointing at this ClusterRole in each
+# namespace where it materialises plugin Secret copies. The
+# operator's own namespace gets a Helm-rendered RoleBinding
+# below; tenant namespaces get one written dynamically by the
+# plugin-set controller at reconcile time
+# (`crate::rbac::ensure_tenant_secret_binding`). The constant
+# names are pinned in `k8s/operator/src/rbac.rs` so chart and
+# operator can never disagree.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: mcpg-operator-tenant-secrets
+  labels:
+    {{- include "mcpg-operator.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch", "create", "patch", "delete"]
+
+---
+# Per-namespace RoleBinding for the operator's OWN namespace.
+# The operator writes verified-plugin Secrets into its own
+# namespace from the plugin controller (see
+# `controllers/plugin.rs::reconcile`); without this binding, that
+# write would be `Forbidden` after the cluster-wide secrets-write
+# verbs were dropped above. Tenant namespace bindings of the same
+# shape are written dynamically by the operator at PluginSet
+# reconcile time.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: mcpg-operator-tenant-secrets
+  namespace: {{ include "mcpg-operator.namespace" . }}
+  labels:
+    {{- include "mcpg-operator.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: mcpg-operator-tenant-secrets
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "mcpg-operator.serviceAccountName" . }}
+    namespace: {{ include "mcpg-operator.namespace" . }}
+{{- if .Values.rbac.tenantRole }}
+---
+# Tenant-admin ClusterRole. Bound per-namespace (e.g. by the Terraform `tenant`
+# module's RoleBinding, or your own) to grant a tenant's subjects self-service
+# over the NAMESPACED user-facing MCPG CRDs inside their namespace(s). The
+# cluster-scoped CRDs (MCPGCluster / MCPGPlugin / MCPGTenant /
+# MCPGRevocationList / MCPGPluginMirror) are intentionally NOT granted — those
+# are platform-team owned. Without this object a RoleBinding to `mcpg-tenant`
+# applies cleanly but grants nothing (a silent no-op), so the chart ships it.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: mcpg-tenant
+  labels:
+    {{- include "mcpg-operator.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["mcpg.dev"]
+    resources: ["mcpggateways", "mcpgpluginsets", "mcpgroutes"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["mcpg.dev"]
+    resources: ["mcpggateways/status", "mcpgpluginsets/status", "mcpgroutes/status"]
+    verbs: ["get"]
+{{- end }}
+{{- end }}

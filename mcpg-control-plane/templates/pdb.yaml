@@ -1,0 +1,18 @@
+{{- if and .Values.podDisruptionBudget.enabled (gt (int .Values.replicaCount) 1) }}
+# PodDisruptionBudget for multi-replica installs. minAvailable: 1 keeps
+# one replica serving sessions + the gRPC agent channel through a node
+# drain. Skipped entirely when replicaCount < 2 because a PDB on a
+# single-replica deployment blocks every node drain.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "mcpg-cp.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "mcpg-cp.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "mcpg-cp.selectorLabels" . | nindent 6 }}
+{{- end }}

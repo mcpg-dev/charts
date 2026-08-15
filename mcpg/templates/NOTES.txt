@@ -1,0 +1,106 @@
+
+MCPG — Model Context Protocol Gateway
+======================================
+{{- $multiInstance := (include "mcpg.isMultiInstance" .) }}
+{{- $natsAvail := (include "mcpg.natsAvailable" .) }}
+{{- $redisAvail := (include "mcpg.redisAvailable" .) }}
+
+{{- if .Values.ingress.enabled }}
+The gateway is accessible via Ingress:
+{{- range $host := .Values.ingress.hosts }}
+  {{- range .paths }}
+  http{{ if $.Values.ingress.tls }}s{{ end }}://{{ $host.host }}{{ .path }}
+  {{- end }}
+{{- end }}
+{{- else if contains "NodePort" .Values.service.type }}
+Get the gateway URL:
+  export NODE_PORT=$(kubectl get --namespace {{ .Release.Namespace }} -o jsonpath="{.spec.ports[0].nodePort}" services {{ include "mcpg.fullname" . }})
+  export NODE_IP=$(kubectl get nodes --namespace {{ .Release.Namespace }} -o jsonpath="{.items[0].status.addresses[0].address}")
+  echo "MCP endpoint: http://$NODE_IP:$NODE_PORT{{ .Values.config.gateway.server.mcp_path | default "/mcp" }}"
+{{- else if contains "LoadBalancer" .Values.service.type }}
+Get the gateway URL (may take a few minutes for the LoadBalancer IP):
+  export SERVICE_IP=$(kubectl get svc --namespace {{ .Release.Namespace }} {{ include "mcpg.fullname" . }} --template "{{"{{ range (index .status.loadBalancer.ingress 0) }}{{.}}{{ end }}"}}")
+  echo "MCP endpoint: http://$SERVICE_IP:{{ .Values.service.port }}{{ .Values.config.gateway.server.mcp_path | default "/mcp" }}"
+{{- else }}
+The gateway is available within the cluster:
+  {{ include "mcpg.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.service.port }}
+
+To port-forward for local access:
+  kubectl --namespace {{ .Release.Namespace }} port-forward svc/{{ include "mcpg.fullname" . }} 8787:{{ .Values.service.port }}
+  echo "MCP endpoint: http://127.0.0.1:8787{{ .Values.config.gateway.server.mcp_path | default "/mcp" }}"
+{{- end }}
+
+Health check:  GET {{ .Values.config.gateway.server.health_path | default "/health" }}
+Readiness:     GET /ready
+{{- if .Values.metrics.enabled }}
+Metrics:       GET {{ include "mcpg.metricsPath" . }}
+{{- end }}
+
+{{- if $multiInstance }}
+
+Deployment mode: MULTI-INSTANCE
+{{- if $natsAvail }}
+  Backend: NATS (delivery bus: NATS pub/sub, stores: nats_kv)
+  {{- if .Values.nats.enabled }}
+  NATS:    bundled subchart ({{ include "mcpg.fullname" . }}-nats)
+  {{- else }}
+  NATS:    external ({{ .Values.externalNats.url }})
+  {{- end }}
+{{- else if $redisAvail }}
+  Backend: Redis (delivery bus: Redis pub/sub, stores: redis)
+  {{- if .Values.redis.enabled }}
+  Redis:   bundled subchart ({{ include "mcpg.fullname" . }}-redis-master)
+  {{- else }}
+  Redis:   external ({{ .Values.externalRedis.url }})
+  {{- end }}
+{{- else }}
+
+  *** WARNING ***
+  You are running {{ .Values.replicaCount }}+ replicas WITHOUT a distributed backend.
+  Server-initiated messages (elicitation, sampling, pipeline results) will
+  only reach the instance holding the client's SSE stream. This WILL cause
+  failures for pipelines with suspend/resume steps.
+
+  Fix: enable a distributed backend:
+    --set nats.enabled=true                              # bundled NATS
+    --set redis.enabled=true                             # bundled Redis
+    --set externalNats.enabled=true,externalNats.url=... # external NATS
+    --set externalRedis.enabled=true,externalRedis.url=... # external Redis
+{{- end }}
+{{- if or $natsAvail $redisAvail }}
+  {{- if or .Values.nats.enabled .Values.redis.enabled }}
+
+  *** TRANSPORT SECURITY ***
+  The bundled coordinator runs PLAINTEXT (no TLS) in-namespace, so the
+  chart set `cluster.allow_insecure_transport: true` automatically. This
+  is fine for quick-start/dev. For production, point at an external,
+  TLS-terminated coordinator (`rediss://` / `tls://`) and leave
+  `cluster.insecureTransport=false` so the gateway enforces TLS at boot.
+  {{- else if .Values.cluster.insecureTransport }}
+
+  *** TRANSPORT SECURITY ***
+  `cluster.insecureTransport=true` — the gateway will accept a PLAINTEXT
+  coordinator transport. The coordinator carries all shared state
+  (sessions, credential-cache events, delivery payloads); use a TLS
+  scheme (`rediss://` / `tls://`) and clear this flag for production.
+  {{- end }}
+{{- end }}
+{{- else }}
+Deployment mode: SINGLE-INSTANCE (in-memory store, in-process delivery bus)
+{{- end }}
+
+{{- if .Values.autoscaling.enabled }}
+
+Autoscaling is enabled ({{ .Values.autoscaling.minReplicas }}-{{ .Values.autoscaling.maxReplicas }} replicas).
+{{- end }}
+
+{{- if .Values.podDisruptionBudget.enabled }}
+Pod Disruption Budget is active.
+{{- end }}
+
+{{- if .Values.networkPolicy.enabled }}
+NetworkPolicy is enforced — ensure upstream/downstream CIDRs are allowed in egressTo.
+{{- end }}
+
+For configuration reference, see:
+  https://mcpg.dev/docs/gateway/configuration

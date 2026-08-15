@@ -1,0 +1,343 @@
+# ============================================================================
+# MCPG Operator Helm chart — default values.
+# ============================================================================
+# See docs/k8s-operator/DEPLOYMENT.md for install procedures and
+# values.yaml customisation guidance.
+#
+# Production deploys MUST configure:
+#   - certManager.enabled: true (or provide your own webhook TLS Secret)
+#   - replicas: 2 (HA via leader election; M0 ships election-stub-only)
+#   - serviceMonitor.enabled: true (when running prometheus-operator)
+#   - resources tuned for your fleet size
+# ============================================================================
+
+# OCI coordinates shared by every first-party image. Helm merges `global` into
+# subcharts, so an umbrella sets these once and this chart follows; the
+# defaults keep a standalone install self-contained.
+#
+# The canonical values live in tools/release/oci-registry.json; see
+# docs/release/OCI-REGISTRY-CONFIGURATION.md for the channel model (the public
+# channel is this same block with `repositoryPrefix: mcpg-dev`).
+global:
+  image:
+    # -- Registry namespace + path the image NAME is joined onto. Empty
+    # publishes at host root.
+    repositoryPrefix: mcpg-dev/source-code
+    # -- Registry host every first-party image is pulled from. Left UNSET
+    # rather than defaulted here so bundled third-party subcharts that read
+    # this same key never see a value they should not act on; the `ghcr.io`
+    # default lives in the "mcpg-operator.image" helper, where only
+    # first-party images see it. Set it to repoint a mirrored install.
+    # registry: ghcr.io
+
+# -- Replica count for the operator Deployment. Multi-replica is safe:
+# leader election (a coordination.k8s.io Lease) gates the reconcile loops,
+# so standbys keep warm caches but only the leader mutates.
+replicaCount: 1
+
+image:
+  # -- Operator container image NAME, joined onto
+  # `global.image.repositoryPrefix`. A value containing a `/` is taken as an
+  # already-qualified repository and the prefix is not prepended.
+  repository: mcpg-operator
+  # -- Operator container image registry host. Absent (the default) inherits
+  # `global.image.registry`; set it to pin this chart alone, or to "" for a
+  # host-less reference.
+  # registry: ghcr.io
+  # -- Image tag (defaults to .Chart.AppVersion).
+  tag: ""
+  # -- Image pull policy.
+  pullPolicy: IfNotPresent
+
+# -- Image pull secrets for private registries.
+imagePullSecrets: []
+
+# -- Override the chart-default release name.
+nameOverride: ""
+# -- Override the full release name.
+fullnameOverride: ""
+# -- Namespace all namespaced objects render into (empty = the release
+# namespace). The operator's controllers hard-code `mcpg-system` for
+# plugin-Secret writes and tenant RoleBindings, so installs whose release
+# namespace differs (e.g. an umbrella chart) MUST set this to `mcpg-system`
+# and ensure that namespace exists.
+namespaceOverride: ""
+
+# ----------------------------------------------------------------------------
+# Service Account
+# ----------------------------------------------------------------------------
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+# ----------------------------------------------------------------------------
+# Custom Resource Definitions
+# ----------------------------------------------------------------------------
+crd:
+  # -- Whether the chart installs CRDs as part of `helm install`.
+  # Set false when CRDs are managed out-of-band (GitOps, OLM,
+  # cluster-admin separate apply).
+  install: true
+  # -- Keep CRDs alive when `helm uninstall` runs. Highly recommended;
+  # uninstalling CRDs orphans owned resources.
+  keepOnUninstall: true
+
+# ----------------------------------------------------------------------------
+# Webhook configuration
+# ----------------------------------------------------------------------------
+webhook:
+  # -- Enable the validating + mutating admission webhooks.
+  # When false, CRDs admit without operator-side validation
+  # (suitable only for dev / debugging).
+  enabled: true
+  # -- failurePolicy. `Fail` blocks CRD edits when the operator
+  # is unreachable (recommended for correctness). `Ignore` lets
+  # CRDs land without validation. See RUNBOOK.md §7 for the
+  # break-glass procedure when a wedged operator pod is
+  # blocking critical CRD writes (S-AUD-02).
+  failurePolicy: Fail
+  # -- Webhook server bind address inside the operator pod.
+  bindAddress: "0.0.0.0:9443"
+  # -- Webhook Service port (kube-apiserver dials this).
+  servicePort: 443
+
+# ----------------------------------------------------------------------------
+# cert-manager (recommended for production)
+# ----------------------------------------------------------------------------
+certManager:
+  # -- Enable cert-manager Certificate resource for the webhook
+  # server's TLS. When disabled, the chart expects a Secret named
+  # `webhook.tls.secretName` to be pre-provisioned.
+  enabled: false
+  issuerRef:
+    name: mcpg-operator-selfsigned
+    kind: Issuer
+    group: cert-manager.io
+  # -- Cert validity duration.
+  duration: 8760h
+  # -- Renew this far before expiry.
+  renewBefore: 720h
+
+# ----------------------------------------------------------------------------
+# TLS Secret (used when certManager.enabled = false)
+# ----------------------------------------------------------------------------
+tls:
+  # -- Pre-provisioned Secret carrying tls.crt + tls.key.
+  secretName: mcpg-operator-webhook-tls
+
+# ----------------------------------------------------------------------------
+# Pod-level security
+# ----------------------------------------------------------------------------
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65534
+  runAsGroup: 65534
+  fsGroup: 65534
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 65534
+  runAsGroup: 65534
+  capabilities:
+    drop:
+      - ALL
+
+# ----------------------------------------------------------------------------
+# Operator runtime config
+# ----------------------------------------------------------------------------
+operator:
+  # -- Restrict watches to a single namespace. Empty = watch every
+  # namespace.
+  watchNamespace: ""
+  # -- Operator log filter (RUST_LOG-style directive).
+  logFilter: "mcpg_operator=info,kube=warn"
+  # -- Log format: `pretty` | `json`.
+  logFormat: "json"
+  # -- Image name the operator falls back to for gateways whose CR omits
+  # `spec.image.repository`. Composed against the global OCI coordinates, so it
+  # is a bare name rather than a path. Only takes effect once a global
+  # coordinate is set; otherwise the operator's compiled-in default applies.
+  gatewayImageName: "gateway"
+  # -- Periodic resync interval in seconds (jittered ±20%).
+  resyncIntervalSecs: 600
+  # -- Per-controller concurrent reconcile budget.
+  reconcileConcurrency: 8
+  # -- Backend plugin ids the gateway controller injects as `plugins[]`
+  # entries into every MANAGED-CLOUD gateway config (`spec.cloud` set),
+  # loading the cdylibs baked into the published gateway images under
+  # `/usr/local/lib/mcpg/plugins/<id>/plugin.so`. Three states:
+  # `null` (default) = the standard first-party backend set
+  # (mock/http/command/graphql/grpc/openapi); a comma-separated
+  # string = replace the set; `""` = disable the injection. Self-host
+  # CRs never receive these entries.
+  cloudDefaultPlugins: null
+  # -- Extra CLI args appended to the operator container (escape hatch for
+  # flags the chart doesn't surface, e.g. `--no-leader-election`).
+  extraArgs: []
+  # -- Extra env vars appended to the operator container. List of standard
+  # core/v1 EnvVar objects ({ name, value } or { name, valueFrom }).
+  extraEnv: []
+  # -- Air-gap: mount a pre-mirrored Sigstore trust root (trusted_root.json)
+  # from a ConfigMap and point cosign keyless verification at it (NO network).
+  # Create the ConfigMap out-of-band from your sync station, then enable this.
+  sigstoreTrustRoot:
+    enabled: false
+    # -- ConfigMap holding the trusted_root.json (in the operator namespace).
+    configMapName: mcpg-trust-roots
+    # -- Key within the ConfigMap.
+    key: trusted_root.json
+    # -- Mount path for the trust root inside the operator container.
+    mountPath: /etc/mcpg/trust
+
+# ----------------------------------------------------------------------------
+# Resources
+# ----------------------------------------------------------------------------
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 1
+    memory: 512Mi
+
+# ----------------------------------------------------------------------------
+# Probes
+# ----------------------------------------------------------------------------
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: metrics
+    scheme: HTTPS
+  initialDelaySeconds: 5
+  periodSeconds: 15
+
+readinessProbe:
+  httpGet:
+    path: /readyz
+    port: metrics
+    scheme: HTTPS
+  initialDelaySeconds: 3
+  periodSeconds: 10
+
+# ----------------------------------------------------------------------------
+# Scheduling
+# ----------------------------------------------------------------------------
+nodeSelector: {}
+tolerations: []
+affinity: {}
+topologySpreadConstraints: []
+priorityClassName: ""
+terminationGracePeriodSeconds: 30
+
+# ----------------------------------------------------------------------------
+# RBAC
+# ----------------------------------------------------------------------------
+rbac:
+  # -- Whether to install the operator's ClusterRole + binding.
+  # Disable when you want to manage RBAC out-of-band (e.g. via
+  # kustomize overlay).
+  create: true
+  # -- Ship the `mcpg-tenant` ClusterRole — tenant-admin self-service over
+  # the namespaced user-facing CRDs (gateways/plugin-sets/routes), bound
+  # per-namespace by the Terraform `tenant` module or your own RoleBinding.
+  tenantRole: true
+
+# ----------------------------------------------------------------------------
+# Prometheus / Monitoring
+# ----------------------------------------------------------------------------
+metrics:
+  # -- Operator metrics endpoint (and healthz / readyz).
+  enabled: true
+  port: 8443
+
+serviceMonitor:
+  # -- Create a ServiceMonitor for the operator's own /metrics.
+  # Requires prometheus-operator CRDs.
+  enabled: false
+  namespace: ""
+  interval: 30s
+  scrapeTimeout: 10s
+  labels: {}
+
+# -- PrometheusRule shipping a default alert pack for the operator.
+# Threshold values are conservative; tune via the nested
+# `thresholds` map.
+prometheusRule:
+  enabled: false
+  namespace: ""
+  interval: 30s
+  labels: {}
+  thresholds:
+    # -- Alert if no controller has reconciled for this many seconds.
+    # Default = 10 * 600 (resyncIntervalSecs) for headroom under
+    # leader-election handovers + slow API server.
+    reconcileStaleSeconds: 6000
+    # -- Alert if transient_error outcomes exceed this rate (/sec).
+    reconcileErrorRatePerSec: 0.1
+    # -- Alert if p95 reconcile latency exceeds this (seconds).
+    reconcileP95Seconds: 2.0
+    # -- Alert if OCI plugin pulls are failing at >this/sec.
+    ociPullErrorRatePerSec: 0.05
+
+# -- ConfigMap shipping the Grafana dashboard JSON. When enabled
+# the chart writes a ConfigMap labelled `grafana_dashboard: "1"`
+# so a Grafana sidecar (kube-prometheus-stack default config)
+# auto-discovers and provisions it.
+grafanaDashboard:
+  enabled: false
+  namespace: ""
+  labels:
+    grafana_dashboard: "1"
+
+# ----------------------------------------------------------------------------
+# NetworkPolicy
+# ----------------------------------------------------------------------------
+# Default-deny posture: only ingress from kube-apiserver (webhook) +
+# Prometheus (metrics scrape), egress to apiserver + DNS + operator-
+# supplied CIDRs (OCI registries, Sigstore endpoints).
+#
+# Off by default because not every cluster runs a NetworkPolicy
+# implementation (Calico, Cilium, etc.). Flip on once you've
+# confirmed your CNI enforces them.
+networkPolicy:
+  enabled: false
+  ingress:
+    # -- Extra `from` rules merged into the webhook ingress block.
+    # Use this when your kube-apiserver runs out-of-cluster.
+    from: []
+    # -- Namespace label value where Prometheus runs. Only used
+    # when serviceMonitor.enabled is true.
+    metricsNamespace: monitoring
+    # -- Extra `from` rules merged into the metrics ingress block.
+    metricsFrom: []
+  egress:
+    # -- Operator-supplied egress CIDRs (registries, Rekor, Fulcio,
+    # corporate proxies). Empty = no extra egress beyond DNS +
+    # apiserver, which means OCI plugin pulls + cosign verification
+    # WILL FAIL. Set this to your registry / Sigstore reachability
+    # CIDRs.
+    cidrs: []
+    # -- Free-form additional egress rules (raw YAML).
+    extra: []
+
+# ----------------------------------------------------------------------------
+# PodDisruptionBudget
+# ----------------------------------------------------------------------------
+# Only rendered when replicaCount > 1 (a PDB on a single-replica
+# Deployment blocks every node drain — a known kubectl footgun).
+podDisruptionBudget:
+  enabled: true
+  # -- Minimum available pods during a voluntary disruption.
+  # `1` keeps one operator alive across a node drain when running
+  # 2 replicas; bump to 2 for 3+ replica fleets.
+  minAvailable: 1
+
+# ----------------------------------------------------------------------------
+# Feature gates (evolve with M1+ work)
+# ----------------------------------------------------------------------------
+featureGates: {}

@@ -1,0 +1,38 @@
+# Sizing overlay: medium clusters (~100-1000 plugin/gateway resources).
+#
+# Apply on top of values.yaml:
+#   helm install mcpg-operator ./helm/charts/mcpg-operator \
+#     -f values.yaml -f values-medium.yaml
+#
+# S-AUD-15: defaults are tuned for small clusters. Above ~100 plugin+gateway
+# resources the operator's reconcile-cache memory starts to climb; this file
+# bumps requests/limits + adds the second replica for HA.
+
+replicaCount: 2
+
+resources:
+  requests:
+    cpu: 200m
+    memory: 256Mi
+  limits:
+    cpu: 2
+    memory: 512Mi
+
+# Tighter probe cadence — control loops should detect dead pods faster at this
+# scale.
+livenessProbe:
+  initialDelaySeconds: 10
+  periodSeconds: 15
+
+readinessProbe:
+  initialDelaySeconds: 5
+  periodSeconds: 5
+
+# The default runtime (resyncIntervalSecs=600 / reconcileConcurrency=8) is fine
+# at this scale, set explicitly for clarity. (These are the keys the chart
+# consumes; the previous top-level `leaderElection` / `resyncIntervalSeconds`
+# keys were never consumed and were removed — lease tuning is an
+# `operator.extraEnv` / MCPG_OPERATOR_LEASE_* knob.)
+operator:
+  resyncIntervalSecs: 600
+  reconcileConcurrency: 8

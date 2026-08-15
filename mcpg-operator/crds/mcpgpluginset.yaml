@@ -1,0 +1,234 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: mcpgpluginsets.mcpg.dev
+spec:
+  group: mcpg.dev
+  names:
+    categories: []
+    kind: MCPGPluginSet
+    plural: mcpgpluginsets
+    shortNames:
+    - mcpgps
+    singular: mcpgpluginset
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.resolvedEntries
+      name: Plugins
+      type: integer
+    - jsonPath: .status.conditions[?(@.type=='Ready')].status
+      name: Ready
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: Auto-generated derived type for MCPGPluginSetSpec via `CustomResource`
+        properties:
+          spec:
+            properties:
+              capabilityGrants:
+                additionalProperties:
+                  items:
+                    type: string
+                  type: array
+                description: |-
+                  Per-plugin capability grants. Keyed by plugin id; values
+                  are subsets of the plugin descriptor's
+                  `required_capabilities`. The operator's admission
+                  webhook validates the subset relationship.
+                type: object
+              entries:
+                description: |-
+                  One entry per plugin the set installs. Order is
+                  preserved in the rendered gateway config (some plugin
+                  chains are order-sensitive — e.g. identity → policy).
+                items:
+                  description: |-
+                    One plugin in a `MCPGPluginSet`. Order in the spec is the
+                    order the gateway sees in its boot config — order-sensitive
+                    chains (identity → policy → audit) must rely on this.
+                  properties:
+                    config:
+                      description: |-
+                        Inline plugin runtime config — passes through verbatim
+                        to the gateway's `plugins[].config`. Schema
+                        varies per plugin; the operator does not validate it
+                        (the gateway's own boot-time validators do). The
+                        `preserve_object` schema annotation marks this field
+                        `x-kubernetes-preserve-unknown-fields` so the API server
+                        keeps the arbitrary nested config intact.
+                      type: object
+                      x-kubernetes-preserve-unknown-fields: true
+                    enabled:
+                      default: true
+                      description: |-
+                        Whether this entry is active. Disabled entries pass
+                        through to status (so operators see what's configured)
+                        but the operator skips them when rendering the gateway
+                        config + materialising plugin Secrets.
+                      type: boolean
+                    enforce:
+                      default: true
+                      description: |-
+                        Whether the plugin is enforced (default) or runs in
+                        shadow mode. Shadow plugins evaluate, log, and emit
+                        metrics, but their Deny/Challenge decisions are mapped
+                        to Allow before reaching the request flow. Operators
+                        use this to roll out a new policy plugin in observation
+                        mode before promoting to enforce.
+
+                        Maps to `PluginEntryConfig.enforce` in the gateway boot
+                        config. Defaults to `true` — pre-1.0 we bias toward
+                        fail-closed: operators must explicitly opt in to shadow
+                        mode.
+                      type: boolean
+                    id:
+                      description: |-
+                        Plugin id — e.g. `dev.mcpg.identity.workload`. Must
+                        match the referenced `MCPGPlugin.spec.pluginId`; the
+                        admission webhook flags mismatches.
+                      type: string
+                    pluginRef:
+                      description: |-
+                        Reference to a cluster-scoped `MCPGPlugin`. Operator
+                        validates the plugin exists + is in `Ready` status before
+                        allowing the set to converge.
+                      properties:
+                        name:
+                          type: string
+                      required:
+                      - name
+                      type: object
+                  required:
+                  - id
+                  - pluginRef
+                  type: object
+                type: array
+            required:
+            - entries
+            type: object
+          status:
+            description: |-
+              Observed state for `MCPGPluginSet`. `resolved_entries` ==
+              `total_entries` is the canonical Ready signal; partial
+              failures land in `failed_entries` so operators can read
+              the per-entry reason without grepping logs.
+            nullable: true
+            properties:
+              conditions:
+                items:
+                  description: |-
+                    One status condition. Serde shape matches K8s
+                    `metav1.Condition` exactly so generic tooling (kubectl,
+                    kustomize, Argo CD) interprets it correctly.
+                  properties:
+                    lastTransitionTime:
+                      description: RFC3339 timestamp of the most recent transition.
+                      format: date-time
+                      type: string
+                    message:
+                      description: Free-text human-readable detail. May be empty.
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        `metadata.generation` the controller had observed when
+                        it set this condition. Lets clients detect stale status.
+                      format: int64
+                      nullable: true
+                      type: integer
+                    reason:
+                      description: |-
+                        CamelCase enum the operator defines per controller.
+                        E.g. `AllReplicasAvailable`, `DependencyPending`,
+                        `SignatureMismatch`.
+                      type: string
+                    status:
+                      description: |-
+                        `"True"`, `"False"`, or `"Unknown"`. K8s convention is to
+                        keep this as a string (not a bool) so `Unknown` is
+                        representable.
+                      type: string
+                    type:
+                      description: |-
+                        `Ready`, `Reconciling`, `Available`, `Degraded`,
+                        `Progressing`, `Failed`, plus per-CRD types.
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              failedEntries:
+                description: |-
+                  Per-entry resolution errors (referenced plugin missing,
+                  revoked, capability grant out of bounds, etc.). Empty
+                  when the set is `Ready`.
+                items:
+                  description: |-
+                    One per-entry resolution failure surfaced into status.
+                    `reason` is a stable enum so consumers can branch on it;
+                    `message` is free-text human detail.
+                  properties:
+                    id:
+                      description: Plugin id the failure pertains to.
+                      type: string
+                    message:
+                      description: Free-text human-readable detail.
+                      type: string
+                    reason:
+                      description: |-
+                        Camel-case enum reason: `PluginNotFound`,
+                        `PluginNotReady`, `PluginRevoked`, `PluginIdMismatch`,
+                        `ArtefactSecretMissing`. (Capability-grant violations are
+                        rejected at admission, not surfaced here.)
+                      type: string
+                  required:
+                  - id
+                  - reason
+                  type: object
+                type: array
+              lastReconcileTime:
+                format: date-time
+                nullable: true
+                type: string
+              observedGeneration:
+                format: int64
+                nullable: true
+                type: integer
+              resolvedEntries:
+                description: |-
+                  Number of entries the operator successfully resolved
+                  (referenced `MCPGPlugin` exists + Ready + not revoked).
+                format: int64
+                nullable: true
+                type: integer
+              resolvedHash:
+                description: |-
+                  SHA-256 of the rendered config (entries + per-entry
+                  configs + grants). Lets dependent gateways detect
+                  "plugin set changed → roll pods" without diffing the
+                  full spec.
+                nullable: true
+                type: string
+              totalEntries:
+                description: |-
+                  Total entries in spec — `resolved_entries` should equal
+                  this when the set is `Ready`.
+                format: int64
+                nullable: true
+                type: integer
+            type: object
+        required:
+        - spec
+        title: MCPGPluginSet
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

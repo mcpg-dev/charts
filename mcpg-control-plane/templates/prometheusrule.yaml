@@ -1,0 +1,91 @@
+{{- if .Values.prometheusRule.enabled }}
+# Default alerting rules for the control plane, matched to the CP's
+# /metrics families (mcpg_cp_http_requests_total,
+# mcpg_cp_license_refresh_total, mcpg_cp_enrollments_total,
+# mcpg_cp_publishes_total). The names carry the mcpg_cp_ prefix the
+# registry applies and the _total suffix the exposition adds; querying
+# the bare names matches nothing at all. Every expression is scoped by
+# job — prometheus-operator sets `job` to the scraped Service name —
+# because the CP's HTTP families use generic metric names that other
+# workloads in the same Prometheus may also emit.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "mcpg-cp.fullname" . }}
+  namespace: {{ default .Release.Namespace .Values.prometheusRule.namespace }}
+  labels:
+    {{- include "mcpg-cp.labels" . | nindent 4 }}
+    {{- with .Values.prometheusRule.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+    - name: mcpg-control-plane.rules
+      interval: {{ .Values.prometheusRule.interval }}
+      rules:
+
+        # ── Scrape-target liveness ───────────────────────────────
+        - alert: MCPGControlPlaneTargetDown
+          expr: |
+            up{job="{{ include "mcpg-cp.fullname" . }}"} == 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "MCPG control plane scrape target is down"
+            description: |
+              Prometheus cannot scrape the CP /metrics endpoint for over
+              5m. The pod is down, not Ready, or the /metrics route is
+              not being served. Sessions, enrollment, and publishes are
+              likely unavailable.
+
+        - alert: MCPGControlPlaneTargetAbsent
+          expr: |
+            absent(up{job="{{ include "mcpg-cp.fullname" . }}"})
+          for: 15m
+          labels:
+            severity: critical
+          annotations:
+            summary: "MCPG control plane scrape target has disappeared"
+            description: |
+              No `up` series exists for the CP job at all — the
+              ServiceMonitor was deleted or relabelled, or this
+              Prometheus no longer selects it. Alerting on the CP is
+              blind until the target returns.
+
+        # ── HTTP error ratio ─────────────────────────────────────
+        - alert: MCPGControlPlaneHttp5xxRatioHigh
+          expr: |
+            sum(rate(mcpg_cp_http_requests_total{job="{{ include "mcpg-cp.fullname" . }}",status=~"5.."}[5m]))
+              /
+            clamp_min(sum(rate(mcpg_cp_http_requests_total{job="{{ include "mcpg-cp.fullname" . }}"}[5m])), 1e-9)
+              > {{ .Values.prometheusRule.thresholds.http5xxRatio }}
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "MCPG control plane 5xx ratio elevated"
+            description: |
+              More than {{ .Values.prometheusRule.thresholds.http5xxRatio }}
+              of CP HTTP requests returned 5xx sustained over 10m. Break
+              down by route class:
+              sum by (route_class) (rate(mcpg_cp_http_requests_total{status=~"5.."}[5m])).
+
+        # ── License refresh loop ─────────────────────────────────
+        - alert: MCPGControlPlaneLicenseRefreshFailing
+          expr: |
+            increase(mcpg_cp_license_refresh_total{job="{{ include "mcpg-cp.fullname" . }}",outcome="error"}[1h])
+              > 0
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "MCPG control plane license refresh reporting failures"
+            description: |
+              The leader-leased license_refresh loop (15m tick) recorded
+              refresh errors within the last hour. Plan changes and
+              revocations from the federation are not propagating; check
+              CP logs and federation reachability. Scoped to
+              outcome="error" — `unlicensed` is the normal answer for an
+              org the issuer does not license, and `refreshed` is success.
+{{- end }}

@@ -1,0 +1,37 @@
+Thanks for installing {{ .Chart.Name }} {{ .Chart.Version }}.
+
+Auth mode: {{ .Values.auth.mode }}
+{{- if eq .Values.auth.mode "none" }}
+⚠  AuthMode=none means anyone reachable on the HTTP port can mint
+   enrollment tokens, quarantine instances, and read audit logs.
+   This is fine for cluster-internal loopback; for any other deploy
+   set `auth.mode=oidc` and configure `auth.oidc.*`.
+{{- end }}
+
+DB:        {{ include "mcpg-cp.dbUrl" . }}
+{{- if and (not .Values.postgresql.enabled) (not .Values.externalDatabase.enabled) (not .Values.cp.dbUrl) }}
+{{- if not .Values.persistence.enabled }}
+
+⚠  SQLite running on the pod's ephemeral filesystem; restarts wipe
+   state. Either set `persistence.enabled=true` or point at Postgres.
+{{- end }}
+{{- end }}
+
+{{- if .Values.ingress.enabled }}
+
+UI:
+{{- range .Values.ingress.hosts }}
+  http://{{ .host }}/
+{{- end }}
+{{- else }}
+
+UI (port-forward):
+  kubectl --namespace {{ .Release.Namespace }} port-forward svc/{{ include "mcpg-cp.fullname" . }} 7843:{{ .Values.service.http.port }}
+  open http://127.0.0.1:7843
+{{- end }}
+
+gRPC (gateway agents):
+  {{ include "mcpg-cp.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.service.grpc.port }}
+{{- if .Values.cp.grpcTls }}
+  (TLS enabled — agents fetch the CA via /v1/ca-cert.pem)
+{{- end }}

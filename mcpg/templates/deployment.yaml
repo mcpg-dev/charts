@@ -1,0 +1,166 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "mcpg.fullname" . }}
+  labels:
+    {{- include "mcpg.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "mcpg.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        {{- include "mcpg.configChecksum" . | nindent 8 }}
+      {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "mcpg.labels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "mcpg.serviceAccountName" . }}
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . | quote }}
+      {{- end }}
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- with .Values.initContainers }}
+      initContainers:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: mcpg
+          image: {{ include "mcpg.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: 8787
+              protocol: TCP
+          env:
+            - name: MCPG_CONFIG
+              value: /etc/mcpg/config.yaml
+            {{- with (include "mcpg.pluginRegistry" .) }}
+            - name: MCPG_DEFAULT_PLUGIN_REGISTRY
+              value: {{ . | quote }}
+            {{- end }}
+            - name: RUST_LOG
+              value: {{ ((.Values.config.observability).logs).level | default "info" | quote }}
+            {{- /* Inject the Redis coordinator password out-of-URL into the
+                   redis cluster plugin's `password` field. MCPG_CLUSTER__PASSWORD
+                   maps (via figment `__`-split) to cluster.password, which the
+                   flattened ClusterConfig forwards to the plugin (W-24). The old
+                   MCPG_REDIS__PASSWORD targeted a top-level `redis:` block that
+                   no longer exists (T3-8) — it never reached the plugin. */ -}}
+            {{- if and .Values.externalRedis.enabled .Values.externalRedis.existingSecret }}
+            - name: MCPG_CLUSTER__PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.externalRedis.existingSecret }}
+                  key: {{ .Values.externalRedis.existingSecretKey | default "redis-password" }}
+            {{- end }}
+            {{- /* Inject Redis password from bundled subchart if auth is enabled.
+                   The Secret name must match the bitnami/redis subchart's own
+                   naming (mcpg.bundledRedisSecretName), not mcpg.fullname. */ -}}
+            {{- if and .Values.redis.enabled (index .Values.redis "auth" | default dict).enabled }}
+            - name: MCPG_CLUSTER__PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mcpg.bundledRedisSecretName" . }}
+                  key: {{ include "mcpg.bundledRedisSecretPasswordKey" . }}
+            {{- end }}
+          {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.extraEnvFrom }}
+          envFrom:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.livenessProbe }}
+          livenessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.readinessProbe }}
+          readinessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.startupProbe }}
+          startupProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/mcpg
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+            {{- if .Values.persistence.enabled }}
+            - name: data
+              mountPath: /var/lib/mcpg
+            {{- end }}
+            {{- if .Values.tls.enabled }}
+            - name: tls
+              mountPath: /etc/mcpg/tls
+              readOnly: true
+            {{- end }}
+            {{- if and .Values.externalNats.enabled .Values.externalNats.credentialsPath }}
+            - name: nats-creds
+              mountPath: {{ dir .Values.externalNats.credentialsPath }}
+              readOnly: true
+            {{- end }}
+          {{- with .Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      {{- with .Values.sidecars }}
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "mcpg.fullname" . }}
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
+        {{- if .Values.persistence.enabled }}
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ .Values.persistence.existingClaim | default (include "mcpg.fullname" .) }}
+        {{- end }}
+        {{- if .Values.tls.enabled }}
+        - name: tls
+          secret:
+            secretName: {{ .Values.tls.existingSecret | default (printf "%s-tls" (include "mcpg.fullname" .)) }}
+        {{- end }}
+      {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

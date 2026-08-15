@@ -1,0 +1,279 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: mcpgservers.mcpg.dev
+spec:
+  group: mcpg.dev
+  names:
+    categories: []
+    kind: MCPGServer
+    plural: mcpgservers
+    shortNames:
+    - mcpgs
+    singular: mcpgserver
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.image
+      name: Image
+      type: string
+    - jsonPath: .spec.federate.gatewayRef.name
+      name: Gateway
+      type: string
+    - jsonPath: .status.conditions[?(@.type=='Ready')].status
+      name: Ready
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: Auto-generated derived type for MCPGServerSpec via `CustomResource`
+        properties:
+          spec:
+            description: |-
+              In-cluster MCP server workload with optional gateway auto-federation.
+              Namespace-scoped MCP server: the operator runs the container and,
+              when `federate` is set, the gateway imports its capabilities.
+            properties:
+              env:
+                additionalProperties:
+                  type: string
+                description: |-
+                  Plain environment variables for the container. Secrets belong in
+                  `envFrom` Secrets referenced by name, not inline values.
+                type: object
+              envFromSecrets:
+                description: |-
+                  Secret names whose keys are injected as environment variables
+                  (`envFrom.secretRef`). The Secrets must live in the server's
+                  namespace.
+                items:
+                  type: string
+                type: array
+              federate:
+                description: |-
+                  Auto-federate this server into a gateway in the same namespace.
+                  Omitted = the workload runs but nothing imports it.
+                nullable: true
+                properties:
+                  auth:
+                    description: |-
+                      Raw `upstream.auth` block for the synthesized federation (e.g.
+                      an `oauth_impersonation` + `cred://` reference).
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
+                  gatewayRef:
+                    description: The gateway that imports this server. Same-namespace only.
+                    properties:
+                      name:
+                        description: '`MCPGGateway` resource name in the server''s namespace.'
+                        type: string
+                    required:
+                    - name
+                    type: object
+                  governance:
+                    description: |-
+                      Raw `governance` block for the synthesized federation (trust
+                      floor + CEL), passed through schema-blind exactly like gateway
+                      `spec.config`.
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
+                  import:
+                    description: |-
+                      Raw `import` block (surface selection) for the synthesized
+                      federation.
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
+                  name:
+                    description: |-
+                      Federation name in the gateway config. Defaults to the
+                      `MCPGServer`'s own name. Operator-authored federations in the
+                      gateway's inline config win on collision.
+                    nullable: true
+                    type: string
+                  toolPrefix:
+                    description: |-
+                      Tool-name prefix for the imported capabilities. Defaults to
+                      `<federation name>.`.
+                    nullable: true
+                    type: string
+                required:
+                - gatewayRef
+                type: object
+              image:
+                description: |-
+                  Container image serving MCP over streamable HTTP. Digest-pinned
+                  refs (`repo@sha256:…`) are strongly recommended; `verify`
+                  requires one.
+                type: string
+              imagePullSecrets:
+                description: Pull secrets for private image registries.
+                items:
+                  description: |-
+                    Same shape as `core/v1.LocalObjectReference`. Used wherever
+                    the spec needs to point at another in-namespace resource —
+                    imagePullSecrets, plugin refs, etc.
+                  properties:
+                    name:
+                      type: string
+                  required:
+                  - name
+                  type: object
+                type: array
+              path:
+                description: HTTP path of the MCP endpoint. Defaults to `/mcp`.
+                nullable: true
+                type: string
+              port:
+                description: Container port the MCP endpoint listens on. Defaults to 8080.
+                format: int32
+                nullable: true
+                type: integer
+              replicas:
+                description: |-
+                  Replica count. Defaults to 1. MCP servers holding per-session
+                  state should stay at 1 unless they handle their own affinity.
+                format: int32
+                nullable: true
+                type: integer
+              resources:
+                description: CPU/memory requests + limits for the container.
+                nullable: true
+                properties:
+                  limits:
+                    additionalProperties:
+                      type: string
+                    type: object
+                  requests:
+                    additionalProperties:
+                      type: string
+                    type: object
+                type: object
+              serviceAccountName:
+                description: |-
+                  ServiceAccount the pod runs as. Defaults to the namespace
+                  default.
+                nullable: true
+                type: string
+              verify:
+                description: |-
+                  Cosign keyless verification of the image before the workload is
+                  (re)rendered. Requires a digest-pinned `image`.
+                nullable: true
+                properties:
+                  cosignIdentity:
+                    description: |-
+                      Cosign keyless identity (issuer + subject) the image signature
+                      must match.
+                    properties:
+                      certificateIdentityRegexp:
+                        description: |-
+                          Regex matching the OIDC subject baked into the cosign
+                          certificate. Example:
+                          `^https://github\.com/mcpg-dev/source-code/`.
+                        type: string
+                      oidcIssuer:
+                        description: |-
+                          OIDC issuer the cosign cert chains back to.
+                          Example: `https://token.actions.githubusercontent.com`.
+                        type: string
+                    required:
+                    - certificateIdentityRegexp
+                    - oidcIssuer
+                    type: object
+                required:
+                - cosignIdentity
+                type: object
+            required:
+            - image
+            type: object
+          status:
+            description: Observed state for `MCPGServer`.
+            nullable: true
+            properties:
+              boundGateway:
+                description: The bound gateway (`<namespace>/<name>`) when `federate` is set.
+                nullable: true
+                type: string
+              conditions:
+                description: |-
+                  Standard `metav1.Condition[]`. Notable types:
+                  - `Ready` — Deployment reports the requested replicas ready.
+                  - `ImageVerified` — cosign verification outcome (only when
+                    `spec.verify` is set; verification failure blocks rendering).
+                  - `GatewayBound` — `federate.gatewayRef` resolves to a gateway
+                    in this namespace.
+                items:
+                  description: |-
+                    One status condition. Serde shape matches K8s
+                    `metav1.Condition` exactly so generic tooling (kubectl,
+                    kustomize, Argo CD) interprets it correctly.
+                  properties:
+                    lastTransitionTime:
+                      description: RFC3339 timestamp of the most recent transition.
+                      format: date-time
+                      type: string
+                    message:
+                      description: Free-text human-readable detail. May be empty.
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        `metadata.generation` the controller had observed when
+                        it set this condition. Lets clients detect stale status.
+                      format: int64
+                      nullable: true
+                      type: integer
+                    reason:
+                      description: |-
+                        CamelCase enum the operator defines per controller.
+                        E.g. `AllReplicasAvailable`, `DependencyPending`,
+                        `SignatureMismatch`.
+                      type: string
+                    status:
+                      description: |-
+                        `"True"`, `"False"`, or `"Unknown"`. K8s convention is to
+                        keep this as a string (not a bool) so `Unknown` is
+                        representable.
+                      type: string
+                    type:
+                      description: |-
+                        `Ready`, `Reconciling`, `Available`, `Degraded`,
+                        `Progressing`, `Failed`, plus per-CRD types.
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              endpoint:
+                description: |-
+                  In-cluster MCP endpoint the gateway federates
+                  (`http://<svc>.<ns>.svc.cluster.local:<port><path>`).
+                nullable: true
+                type: string
+              lastReconcileTime:
+                format: date-time
+                nullable: true
+                type: string
+              observedGeneration:
+                format: int64
+                nullable: true
+                type: integer
+              readyReplicas:
+                description: Ready replicas reported by the Deployment.
+                format: int32
+                nullable: true
+                type: integer
+            type: object
+        required:
+        - spec
+        title: MCPGServer
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
