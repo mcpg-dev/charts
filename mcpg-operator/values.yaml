@@ -35,6 +35,15 @@ global:
 # so standbys keep warm caches but only the leader mutates.
 replicaCount: 1
 
+# -- Deployment update strategy. Recreate is the working default here:
+# `/readyz` answers only on the leader, so a RollingUpdate that keeps the
+# old pod until the new one is Ready can never finish — the new pod waits
+# on a lease the old pod only releases by exiting. Override with a
+# RollingUpdate block only alongside a readiness model that does not gate
+# on leadership.
+updateStrategy:
+  type: Recreate
+
 image:
   # -- Operator container image NAME, joined onto
   # `global.image.repositoryPrefix`. A value containing a `/` is taken as an

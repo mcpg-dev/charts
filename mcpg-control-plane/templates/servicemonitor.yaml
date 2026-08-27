@@ -1,7 +1,13 @@
 {{- if .Values.serviceMonitor.enabled }}
-# Scrapes the CP's global /metrics on the http port. The cp-server
+# Scrapes the CP's global metrics on the http port. The cp-server
 # serves plain HTTP by design (TLS terminates at the ingress), so the
 # scrape is scheme http with no tlsConfig.
+#
+# The path is ROOTED even when the CP serves under a base path. Metrics are
+# unauthenticated on the premise of being a cluster-internal target, and
+# Prometheus reaches the pod directly — so the surface stays where no edge
+# forwards it, rather than under the prefix an edge does forward. Do not
+# "fix" this to follow `cp.externalUrl`: that is what published the counters.
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:

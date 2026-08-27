@@ -10,11 +10,14 @@ spec:
   selector:
     matchLabels:
       {{- include "mcpg-operator.selectorLabels" . | nindent 6 }}
+  # Recreate, not RollingUpdate: /readyz answers only on the LEADER, so a
+  # rolling upgrade with maxUnavailable 0 wedges — the replacement pod can
+  # never pass readiness while the old pod still holds the lease, and
+  # deleting the old pod just respawns it from the old ReplicaSet. Recreate
+  # releases the lease before the new pod starts. Override only with a
+  # readiness model that does not gate on leadership.
   strategy:
-    type: RollingUpdate
-    rollingUpdate:
-      maxSurge: 1
-      maxUnavailable: 0
+    {{- toYaml .Values.updateStrategy | nindent 4 }}
   template:
     metadata:
       labels:

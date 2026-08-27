@@ -99,6 +99,17 @@ affinity: {}
 # -----------------------------------------------------------------------------
 cp:
   # External base URL; used in enrollment URLs + OIDC redirect URI.
+  #
+  # A PATH here (https://host/control-plane) is the serving base path, and a
+  # surface sits where its caller reaches it:
+  #   dual (root AND prefix) — /healthz, /readyz: the kubelet reaches the pod
+  #     directly, so the probes below need no knowledge of the prefix.
+  #   root only — /metrics: Prometheus also reaches the pod directly, and the
+  #     root is what an edge does NOT forward, which is what keeps an
+  #     unauthenticated surface cluster-internal.
+  #   prefix only — /statusz, /v1, /auth, assets: reached THROUGH the edge.
+  # Callers of a prefix-only route must be moved by hand when this changes;
+  # a stale root path there is a dark target, not an error.
   externalUrl: "http://localhost:7843"
   # Database URL. Empty string ⇒ chart auto-derives:
   #   - postgresql.enabled=true → postgres://... pointing at the
