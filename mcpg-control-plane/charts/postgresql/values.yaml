@@ -1299,6 +1299,9 @@ backup:
   cronjob:
     ## @param backup.cronjob.schedule Set the cronjob parameter schedule
     schedule: "@daily"
+    ## @param backup.cronjob.suspend Suspend the dump CronJob without deleting it. Rendered only when set,
+    ## so the value (not a live kubectl patch) is what survives upgrades and GitOps drift correction
+    suspend:
     ## @param backup.cronjob.timeZone Set the cronjob parameter timeZone
     timeZone: ""
     ## @param backup.cronjob.concurrencyPolicy Set the cronjob parameter concurrencyPolicy

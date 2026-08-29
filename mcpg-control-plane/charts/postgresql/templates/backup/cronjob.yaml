@@ -19,6 +19,9 @@ metadata:
   {{- end }}
 spec:
   schedule: {{ quote .Values.backup.cronjob.schedule }}
+  {{- if not (kindIs "invalid" .Values.backup.cronjob.suspend) }}
+  suspend: {{ .Values.backup.cronjob.suspend }}
+  {{- end }}
   {{- if .Values.backup.cronjob.timezone }}
   timeZone: {{ .Values.backup.cronjob.timezone | quote }}
   {{- end }}
