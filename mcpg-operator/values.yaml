@@ -185,11 +185,23 @@ operator:
   # string = replace the set; `""` = disable the injection. Self-host
   # CRs never receive these entries.
   cloudDefaultPlugins: null
+  # Default OTLP traces destination for CLOUD-provisioned gateways: rendered
+  # tenant configs with no authored observability.traces get traces enabled
+  # through the dev.mcpg.observability.otlp sink at this URL (point it at an
+  # in-cluster collector). "" = no injection.
+  defaultOtlpTracesUrl: ""
+  # Extra pod annotations stamped on every rendered gateway pod, as
+  # comma-separated key=value pairs (a CR's own spec.podAnnotations wins on
+  # collision) — e.g. "prometheus.io/scrape=true,prometheus.io/port=8080".
+  gatewayPodAnnotations: ""
   # -- Extra CLI args appended to the operator container (escape hatch for
   # flags the chart doesn't surface, e.g. `--no-leader-election`).
   extraArgs: []
   # -- Extra env vars appended to the operator container. List of standard
   # core/v1 EnvVar objects ({ name, value } or { name, valueFrom }).
+  # Extra pod annotations (e.g. prometheus.io/scrape for annotation-model
+  # collectors).
+  podAnnotations: {}
   extraEnv: []
   # -- Air-gap: mount a pre-mirrored Sigstore trust root (trusted_root.json)
   # from a ConfigMap and point cosign keyless verification at it (NO network).

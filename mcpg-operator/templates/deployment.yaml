@@ -22,6 +22,10 @@ spec:
     metadata:
       labels:
         {{- include "mcpg-operator.selectorLabels" . | nindent 8 }}
+      {{- with .Values.operator.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
     spec:
       serviceAccountName: {{ include "mcpg-operator.serviceAccountName" . }}
       automountServiceAccountToken: true
@@ -105,6 +109,14 @@ spec:
             {{- if not (kindIs "invalid" .Values.operator.cloudDefaultPlugins) }}
             - name: MCPG_OPERATOR_CLOUD_DEFAULT_PLUGINS
               value: {{ .Values.operator.cloudDefaultPlugins | quote }}
+            {{- end }}
+            {{- with .Values.operator.defaultOtlpTracesUrl }}
+            - name: MCPG_OPERATOR_DEFAULT_OTLP_TRACES_URL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.operator.gatewayPodAnnotations }}
+            - name: MCPG_OPERATOR_GATEWAY_POD_ANNOTATIONS
+              value: {{ . | quote }}
             {{- end }}
             {{- with .Values.operator.extraEnv }}
             {{- toYaml . | nindent 12 }}
