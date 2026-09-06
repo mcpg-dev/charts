@@ -31,10 +31,11 @@ global:
     # registry: ghcr.io
 
 # -- Number of cp-server replicas. Multi-replica requires a shared
-# Postgres: the replica-shared secrets live in the database (cookie
-# signing key + CP CA in the `cluster_secrets` table, tenant payload
-# DEKs in `tenant_payload_keys`), and the background janitors
-# coordinate via `leader_leases`. SQLite has no shared store, so it is
+# Postgres: the replica-shared secrets live in the database (the
+# instance-JWT/license signing key, cookie signing key, and CP CA in the
+# `cluster_secrets` table, tenant payload DEKs in `tenant_payload_keys`),
+# and the background janitors coordinate via `leader_leases`. No shared
+# filesystem is needed. SQLite has no shared store, so it is
 # single-replica only — the chart refuses to render replicaCount > 1
 # unless a Postgres source is configured (cp.dbUrl / postgresql.enabled
 # / externalDatabase.enabled, or cp.assumeExternalDbUrl for a DSN
@@ -336,8 +337,11 @@ extraEnv: []
 extraEnvFrom: []
 
 # Extra volumes + mounts (advanced). On the Postgres path the sqlite `data`
-# PVC is not emitted; mount a PVC here for the signing-key dir ($HOME/.mcpg)
-# so per-pod key regeneration is avoided. Example:
+# PVC is not emitted. The CP keeps no replica-shared state on disk — the
+# signing key, CP CA, and cookie key all live in the `cluster_secrets`
+# table — so most Postgres installs need nothing here. Example (a one-time
+# migration re-mounting a pre-`cluster_secrets` signing.der so the first
+# replica adopts it into the DB):
 #   extraVolumes:
 #     - name: mcpg-home
 #       persistentVolumeClaim: { claimName: mcpg-cp-home }
@@ -347,10 +351,10 @@ extraEnvFrom: []
 extraVolumes: []
 extraVolumeMounts: []
 
-# Init containers (verbatim). The signing-key mount above is the motivating
-# case: storage without fsGroup support (hostPath-style provisioners) hands
-# the pod a root-owned directory, so a privileged chown init step is the
-# portable way to make it writable for runAsUser.
+# Init containers (verbatim). Motivating case: a one-time migration mount
+# (above) on storage without fsGroup support hands the pod a root-owned
+# directory, so a privileged chown init step is the portable way to make it
+# readable by runAsUser.
 initContainers: []
 
 terminationGracePeriodSeconds: 30

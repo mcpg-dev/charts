@@ -81,6 +81,19 @@ spec:
                   name: {{ include "mcpg.bundledRedisSecretName" . }}
                   key: {{ include "mcpg.bundledRedisSecretPasswordKey" . }}
             {{- end }}
+            {{- /* The auto-wired cluster block names MCPG_CLUSTER_STATE_KEY in
+                   `state_encryption_key_env` and the gateway refuses a
+                   clustered boot without key material, so the env var ships
+                   whenever the auto-wire is active — from the operator's
+                   Secret (cluster.stateEncryption.existingSecret) or the
+                   chart-generated one (cluster-state-secret.yaml). */ -}}
+            {{- if (include "mcpg.autoWiredCluster" .) }}
+            - name: MCPG_CLUSTER_STATE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mcpg.stateKeySecretName" . }}
+                  key: {{ include "mcpg.stateKeySecretKey" . }}
+            {{- end }}
           {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
           {{- end }}

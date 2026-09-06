@@ -143,6 +143,36 @@ true
 {{- end }}
 
 {{/*
+Determine if the configmap's cluster auto-wire is active: a NATS or Redis
+backend is on AND the operator has not supplied `config.cluster` (which
+suppresses the auto-wire and is rendered verbatim). Drives the state-key
+Secret and the MCPG_CLUSTER_STATE_KEY env injection — the auto-wired
+cluster block names that env var in `state_encryption_key_env`, and only
+the auto-wired block does. Returns "true" or "".
+*/}}
+{{- define "mcpg.autoWiredCluster" -}}
+{{- if and (not (hasKey (.Values.config | default dict) "cluster")) (or (include "mcpg.natsAvailable" .) (include "mcpg.redisAvailable" .)) -}}
+true
+{{- end -}}
+{{- end }}
+
+{{/*
+Cluster state-encryption Secret name + key. Honours
+`cluster.stateEncryption.existingSecret`; the chart-managed default is
+`<fullname>-cluster-state` (created by cluster-state-secret.yaml).
+*/}}
+{{- define "mcpg.stateKeySecretName" -}}
+{{- if .Values.cluster.stateEncryption.existingSecret -}}
+{{- tpl .Values.cluster.stateEncryption.existingSecret $ -}}
+{{- else -}}
+{{- printf "%s-cluster-state" (include "mcpg.fullname" .) -}}
+{{- end -}}
+{{- end }}
+{{- define "mcpg.stateKeySecretKey" -}}
+{{- .Values.cluster.stateEncryption.secretKey | default "state-key" -}}
+{{- end }}
+
+{{/*
 Resolve the NATS URL.
   - Bundled subchart: nats://<release>-nats:4222
   - External: externalNats.url

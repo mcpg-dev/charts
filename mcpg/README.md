@@ -54,7 +54,11 @@ replicaCount: 1
 
 ### Multi-Instance
 
-Requires a distributed backend for session/pipeline/task stores and the delivery bus. Without one, server-initiated messages (elicitation, sampling, pipeline suspend/resume) only reach the local instance.
+Requires a distributed backend for session/pipeline/task stores and the delivery bus. Without one, each replica runs as an independent gateway: server-initiated messages (elicitation, sampling, pipeline suspend/resume) only reach the instance holding the client's SSE stream.
+
+**The chart enforces this at render time.** `replicaCount > 1` (or `autoscaling.enabled=true`) with no coordination backend configured fails `helm template` / `helm install` with remediation steps. Any of the options below satisfies the requirement, as does a custom `cluster:` block under `config:` or `extraConfig:` (see [Backend Auto-Wiring](#backend-auto-wiring)) — the chart takes an operator-supplied cluster block as authoritative and does not validate its contents.
+
+**Clustered state is sealed by default.** On every auto-wired path (Options A–D below) the rendered `cluster:` block sets `state_encryption_key_env: MCPG_CLUSTER_STATE_KEY` and the deployment injects that env var from a Secret: `cluster.stateEncryption.existingSecret` when set (key `cluster.stateEncryption.secretKey`, default `state-key`), otherwise a chart-created Secret `<fullname>-cluster-state` holding a generated key (32 random bytes, URL-safe base64 — the format the gateway accepts). Helm `lookup` keeps the generated key stable across `helm upgrade`, but a plain `helm template` mints a fresh key every render — GitOps / template-only pipelines must pin `existingSecret`. A custom `cluster:` block under `config:` / `extraConfig:` is rendered as-is: set `state_encryption_key_env` there yourself (delivering the env var via `extraEnv`) or set `allow_plaintext_state: true`, or the gateway refuses to boot.
 
 **Option A — Bundled NATS (recommended)**
 
@@ -149,7 +153,7 @@ extraConfig:
 
 For redis or nats capability state, set `cluster.kind` once — operators cannot open per-capability redis / nats connections in-gateway. The previous `storeBackend.{sessionStore,pipelineStore,taskStore}` knobs are gone.
 
-**Custom cluster config** (consul, etcd, TLS, replicas, lease TTLs, …) goes under `extraConfig.cluster:`:
+**Custom cluster config** (TLS, replicas, lease TTLs, …) goes under `extraConfig.cluster:`:
 
 ```yaml
 extraConfig:
@@ -286,7 +290,7 @@ touches a third-party image.
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
-| `replicaCount` | Number of replicas | `1` |
+| `replicaCount` | Number of replicas — more than one requires a coordination backend (the render fails without one; see [Multi-Instance](#multi-instance)) | `1` |
 | `nameOverride` | Override chart name | `""` |
 | `fullnameOverride` | Override full release name | `""` |
 | `terminationGracePeriodSeconds` | Pod termination grace period | `30` |
@@ -324,7 +328,7 @@ touches a third-party image.
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
-| `autoscaling.enabled` | Enable HPA | `false` |
+| `autoscaling.enabled` | Enable HPA — counts as multi-instance, so it requires a coordination backend (see [Multi-Instance](#multi-instance)) | `false` |
 | `autoscaling.minReplicas` | Minimum replicas | `2` |
 | `autoscaling.maxReplicas` | Maximum replicas | `10` |
 | `autoscaling.targetCPUUtilizationPercentage` | CPU target | `70` |
@@ -471,6 +475,17 @@ The chart auto-renders `cluster:` from `nats.enabled` / `redis.enabled` /
 `externalNats.enabled` / `externalRedis.enabled`. Operators wanting custom
 cluster.kind / TLS / replicas / etc. set `extraConfig.cluster:` — that
 merges last and wins.
+
+A custom block owns all of its fields, state encryption included: the
+gateway refuses a clustered boot unless the block sets
+`state_encryption_key_env` (deliver the named env var via `extraEnv`) or
+`allow_plaintext_state: true`.
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `cluster.insecureTransport` | Permit a plaintext (non-TLS) coordinator transport | `false` |
+| `cluster.stateEncryption.existingSecret` | Existing Secret with the state-encryption key — URL-safe base64 decoding to 32 bytes. Empty = the chart creates `<fullname>-cluster-state` with a generated key (pin a Secret for template-only pipelines) | `""` |
+| `cluster.stateEncryption.secretKey` | Key within the state-encryption Secret | `"state-key"` |
 
 The pre-6c-10 `storeBackend.{sessionStore,pipelineStore,taskStore}` knobs
 are gone — per-capability redis / nats overrides are no longer accepted

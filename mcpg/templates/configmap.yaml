@@ -3,6 +3,8 @@
     1. .Values.config        — user-supplied application config
     2. Auto-wired cluster    — when bundled or external NATS/Redis is on.
     3. .Values.extraConfig   — force-override escape hatch
+  then refuse to render a multi-instance deployment whose merged config
+  carries no `cluster:` block.
 
   T3-8 follow-up (2026-05-04): top-level `nats:` / `redis:` / `kafka:`
   config blocks are gone. NATS / Kafka connection params live on each
@@ -22,6 +24,16 @@
     `cluster:` block when nats / redis is bundled or external —
     operators wanting custom config (TLS, replicas, …) put it in
     `extraConfig.cluster`, which merges last and wins.
+
+    The auto-wired block also sets `state_encryption_key_env:
+    MCPG_CLUSTER_STATE_KEY` — the deployment injects that env var from
+    the state-key Secret (cluster-state-secret.yaml, or
+    cluster.stateEncryption.existingSecret), so clustered state is
+    sealed by default; the gateway refuses a clustered boot without key
+    material. Operator-supplied blocks (`config.cluster` /
+    `extraConfig.cluster` alone) are rendered as-is: those operators set
+    `state_encryption_key_env` (or `allow_plaintext_state: true`)
+    themselves.
 */ -}}
 {{- /* Transport-security opt-out (W-9): the gateway refuses a plaintext
     coordinator at boot. The operator sets `cluster.insecureTransport`;
@@ -45,12 +57,14 @@
     {{- if and .Values.nats.enabled (not $hasExtraCluster) }}{{- $insecure = true }}{{- end }}
     {{- if $insecure }}{{- $_ := set $clusterCfg "tls" (dict "require_tls" false) }}{{- end }}
     {{- $_ := set $clusterCfg "allow_insecure_transport" $insecure }}
+    {{- $_ := set $clusterCfg "state_encryption_key_env" "MCPG_CLUSTER_STATE_KEY" }}
     {{- $_ := set $cfg "cluster" $clusterCfg }}
   {{- else if (include "mcpg.redisAvailable" .) }}
     {{- $redisUrl := (include "mcpg.redisUrl" .) }}
     {{- $clusterCfg := dict "kind" "redis" "url" $redisUrl "key_prefix" "mcpg:cluster:" }}
     {{- if and .Values.redis.enabled (not ((.Values.redis.tls).enabled)) (not $hasExtraCluster) }}{{- $insecure = true }}{{- end }}
     {{- $_ := set $clusterCfg "allow_insecure_transport" $insecure }}
+    {{- $_ := set $clusterCfg "state_encryption_key_env" "MCPG_CLUSTER_STATE_KEY" }}
     {{- $_ := set $cfg "cluster" $clusterCfg }}
   {{- end }}
 {{- end }}
@@ -58,6 +72,26 @@
 {{- /* ---- Merge extraConfig last (highest precedence) ---- */ -}}
 {{- if .Values.extraConfig }}
   {{- $cfg = merge .Values.extraConfig $cfg }}
+{{- end }}
+
+{{- /* ---- Multi-instance requires a coordination backend ----
+    N replicas without a `cluster:` block run as N independent gateways
+    (per-replica sessions/tasks/pipelines; server-initiated delivery
+    reaches only the replica holding the client's SSE stream). Any
+    source of the block satisfies the guard: the auto-wire above,
+    `config.cluster`, or `extraConfig.cluster`. */ -}}
+{{- if and (include "mcpg.isMultiInstance" .) (not (hasKey $cfg "cluster")) }}
+  {{- $mode := printf "replicaCount=%d" (int .Values.replicaCount) }}
+  {{- if .Values.autoscaling.enabled }}
+    {{- $mode = printf "autoscaling.enabled=true (%d-%d replicas)" (int .Values.autoscaling.minReplicas) (int .Values.autoscaling.maxReplicas) }}
+  {{- end }}
+  {{- fail (printf `%s needs a cluster coordination backend — N replicas without one run as N independent gateways: sessions, tasks and pipelines are not shared, and server-initiated messages (elicitation, sampling, pipeline results) reach only the replica holding the client's SSE stream. Configure one of:
+  --set nats.enabled=true                                 # bundled NATS
+  --set redis.enabled=true                                # bundled Redis
+  --set externalNats.enabled=true,externalNats.url=...    # external NATS (tls://)
+  --set externalRedis.enabled=true,externalRedis.url=...  # external Redis (rediss://)
+  extraConfig.cluster: <block>                            # custom coordinator (tuned nats/redis)
+or run a single instance (replicaCount=1, autoscaling.enabled=false).` $mode) }}
 {{- end }}
 
 apiVersion: v1

@@ -46,8 +46,6 @@ spec:
                 - single_node
                 - redis
                 - nats
-                - consul
-                - etcd
                 type: string
               config:
                 additionalProperties: true
@@ -91,6 +89,98 @@ spec:
                   - secretName
                   type: object
                 type: array
+              managed:
+                description: |-
+                  Managed coordinator: when set, the operator PROVISIONS the NATS
+                  coordinator itself (StatefulSet + Services + generated
+                  credentials) instead of the caller pointing `backend`/`config`
+                  at an existing one. `backend` is then implicitly `nats` and the
+                  `cluster:` block is operator-generated — admission rejects a
+                  spec that also sets `backend`/`config` alongside `managed`.
+                nullable: true
+                properties:
+                  image:
+                    description: NATS server image. Defaults to [`DEFAULT_MANAGED_NATS_IMAGE`].
+                    nullable: true
+                    type: string
+                  replicas:
+                    description: |-
+                      NATS replica count. v1 supports single-node JetStream only: any
+                      value is CAPPED at 1 when rendering the StatefulSet (clustered
+                      NATS quorum config is out of scope), with a warning event when a
+                      larger value is requested. The field is retained for forward
+                      compatibility.
+                    format: uint8
+                    maximum: 255.0
+                    minimum: 0.0
+                    nullable: true
+                    type: integer
+                  resources:
+                    description: |-
+                      Resource requests/limits for the NATS container. Defaults to a
+                      modest request when unset.
+                    nullable: true
+                    properties:
+                      limits:
+                        additionalProperties:
+                          type: string
+                        type: object
+                      requests:
+                        additionalProperties:
+                          type: string
+                        type: object
+                    type: object
+                  storage:
+                    default: {}
+                    description: |-
+                      JetStream file-store volume knobs (the coordinator keeps lease /
+                      KV / stream state on this PVC).
+                    properties:
+                      size:
+                        description: |-
+                          PVC size (`volumeClaimTemplate`). Defaults to
+                          [`DEFAULT_MANAGED_STORAGE_SIZE`].
+                        nullable: true
+                        type: string
+                      storageClassName:
+                        description: StorageClass for the PVC. Unset ⇒ the cluster default class.
+                        nullable: true
+                        type: string
+                    type: object
+                  tls:
+                    description: |-
+                      Optional in-cluster TLS via cert-manager. With an `issuerRef` the
+                      controller renders a `Certificate`, the NATS server terminates
+                      TLS, and the injected block sets `require_tls: true` + carries the
+                      CA. Without it the coordinator is plaintext in-cluster and the
+                      block sets `allow_insecure_transport: true` (a warning is
+                      surfaced).
+                    nullable: true
+                    properties:
+                      issuerRef:
+                        description: |-
+                          cert-manager issuer the controller points the NATS server
+                          `Certificate` at. Unset ⇒ plaintext in-cluster coordinator.
+                        nullable: true
+                        properties:
+                          group:
+                            default: cert-manager.io
+                            description: API group. Defaults to `cert-manager.io`.
+                            type: string
+                          kind:
+                            default: Issuer
+                            description: |-
+                              `Issuer` (namespaced, in the operator namespace) or
+                              `ClusterIssuer`. Defaults to `Issuer`.
+                            type: string
+                          name:
+                            description: Issuer resource name.
+                            type: string
+                        required:
+                        - name
+                        type: object
+                    type: object
+                type: object
               pluginRef:
                 description: |-
                   Optional reference to the cluster cdylib's OCI source via a
@@ -176,10 +266,31 @@ spec:
                   config edit rolls every bound gateway.
                 nullable: true
                 type: string
+              coordinationSecret:
+                description: |-
+                  Name of the generated coordination Secret (NATS token + state
+                  key [+ CA]) in the operator namespace. Absent for a non-managed
+                  cluster.
+                nullable: true
+                type: string
               lastReconcileTime:
                 format: date-time
                 nullable: true
                 type: string
+              managedReady:
+                description: |-
+                  True once the operator provisioned the managed NATS coordinator
+                  (generated Secret present + StatefulSet has its ready replica).
+                  Absent for a point-at-existing (non-managed) cluster.
+                nullable: true
+                type: boolean
+              natsReadyReplicas:
+                description: |-
+                  Ready replicas of the provisioned NATS StatefulSet. Absent for a
+                  non-managed cluster.
+                format: int32
+                nullable: true
+                type: integer
               observedGeneration:
                 format: int64
                 nullable: true

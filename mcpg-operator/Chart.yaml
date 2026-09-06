@@ -9,7 +9,7 @@ description: |
 
 # Chart version (independent of the operator binary version).
 # Bumped on every chart-shape change.
-version: 0.1.0-beta.13
+version: 0.1.0-beta.16
 
 # Operator binary version this chart is paired with (rendered
 # into the Deployment's image tag when the user doesn't override).

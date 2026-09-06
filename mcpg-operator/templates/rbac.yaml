@@ -72,9 +72,17 @@ rules:
   - apiGroups: ["apps"]
     resources: ["deployments"]
     verbs: ["get", "list", "watch", "create", "patch"]
+  # A managed MCPGCluster provisions a NATS StatefulSet the operator owns
+  # end to end; delete lets the finalizer prune it (cluster-scoped parent,
+  # so no owner-ref GC).
+  - apiGroups: ["apps"]
+    resources: ["statefulsets"]
+    verbs: ["get", "list", "watch", "create", "patch", "delete"]
+  # delete covers managed-coordinator Service/ConfigMap prune on
+  # MCPGCluster teardown (finalizer-driven, no owner-ref GC).
   - apiGroups: [""]
     resources: ["services", "configmaps", "serviceaccounts"]
-    verbs: ["get", "list", "watch", "create", "patch"]
+    verbs: ["get", "list", "watch", "create", "patch", "delete"]
   # Opt-in scaling/availability children, rendered only when
   # `spec.autoscaling.enabled` / `spec.podDisruptionBudget.enabled`.
   # Owned end-to-end (SSA + owner refs); no delete (owner-ref GC

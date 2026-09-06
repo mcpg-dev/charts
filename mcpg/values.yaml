@@ -8,11 +8,15 @@
 # When running more than one replica (replicaCount > 1 or autoscaling.enabled),
 # mcpg REQUIRES a distributed cluster backend so that sessions / tasks /
 # pipelines / subscriptions / delivery / cancellation share state across
-# replicas. Set `cluster.kind` ONCE at the top level and every capability
+# replicas. The chart ENFORCES this at render time: a multi-instance
+# deployment with no backend enabled below and no `cluster` block under
+# `config:` / `extraConfig:` fails `helm template` / `helm install` with
+# remediation steps — N uncoordinated replicas would run as N independent
+# gateways. Set `cluster.kind` ONCE at the top level and every capability
 # inherits the cluster plugin's connection:
 #
 #   cluster:
-#     kind: redis    # | nats | consul | etcd
+#     kind: redis    # | nats
 #     url: redis://redis.svc:6379
 #
 # The chart auto-renders this `cluster:` block when nats.enabled=true or
@@ -34,7 +38,7 @@
 #      own connection details. No subchart is deployed; `cluster.kind`
 #      auto-wires to the external endpoint.
 #
-# Operators wanting cluster.kind=consul / etcd or fine-grained tuning
+# Operators wanting fine-grained tuning
 # (TLS, replicas, lease TTLs, …) put their cluster block under
 # `extraConfig.cluster:` — that merges last and wins over the auto-render.
 #
@@ -67,7 +71,9 @@ global:
     # for the air-gapped case this key exists to serve.
     # registry: ghcr.io
 
-# -- Number of replicas (ignored when autoscaling.enabled=true)
+# -- Number of replicas (ignored when autoscaling.enabled=true). More than
+# one requires a cluster coordination backend (see MULTI-INSTANCE DEPLOYMENT
+# above) — the render fails without one.
 replicaCount: 1
 
 image:
@@ -488,20 +494,32 @@ externalRedis:
   existingSecretKey: "redis-password"
 
 # ===========================================================================
-# Cluster Coordinator — Transport Security (W-9)
+# Cluster Coordinator — Transport & State Security
 # ===========================================================================
 # The cluster coordinator carries ALL shared multi-instance state across
 # replicas — sessions, credential-cache events, delivery payloads. The
 # gateway REFUSES to boot against a plaintext (non-TLS) coordinator
 # transport unless the opt-out below is set.
 #
-#   - External redis/nats/etcd/consul: use a TLS scheme (`rediss://` /
-#     `tls://` / `https://`) for a secure default. A plaintext endpoint is
+#   - External redis/nats: use a TLS scheme (`rediss://` /
+#     `tls://`) for a secure default. A plaintext endpoint is
 #     refused at boot.
 #   - Bundled subcharts (redis.enabled / nats.enabled): the chart deploys
 #     them WITHOUT TLS (plaintext, in-namespace) for quick-start/dev, so the
 #     rendered cluster block sets the opt-out automatically. For production,
 #     run an external TLS-terminated coordinator (or enable subchart TLS).
+#
+# Independently of transport, the gateway also refuses a clustered boot
+# without a STATE-ENCRYPTION key (`cluster.state_encryption_key_env`; its
+# own escape hatch is `cluster.allow_plaintext_state: true`). For the
+# auto-wired coordinator paths (bundled/external nats/redis) the chart
+# handles this: the rendered cluster block names MCPG_CLUSTER_STATE_KEY and
+# the deployment injects that env var from the Secret configured under
+# `stateEncryption` below. Operators supplying their own cluster block via
+# `config.cluster` / `extraConfig.cluster` own the WHOLE block: set
+# `state_encryption_key_env` there (and deliver the env var via extraEnv,
+# e.g. a secretKeyRef) or set `allow_plaintext_state: true`, else every
+# replica refuses to boot.
 # ---------------------------------------------------------------------------
 cluster:
   # -- Permit a plaintext (non-TLS) coordinator transport. Maps to the
@@ -511,6 +529,22 @@ cluster:
   #    in-namespace). Set `true` here only for an external plaintext
   #    coordinator on a trusted local/dev network.
   insecureTransport: false
+
+  # State-encryption key delivery for the auto-wired coordinator paths.
+  stateEncryption:
+    # -- Name of an existing Secret holding the state-encryption key. The
+    #    value must be URL-safe base64 (padded or unpadded, `-_` alphabet,
+    #    NOT `+/`) decoding to exactly 32 bytes, e.g.
+    #    `head -c32 /dev/urandom | basenc --base64url`. Left empty, the
+    #    chart creates Secret `<fullname>-cluster-state` with a generated
+    #    key: `lookup` reuses the key already on the cluster so `helm
+    #    upgrade` never rotates it, but a plain `helm template` has no
+    #    cluster to consult and mints a fresh key EVERY render — pipelines
+    #    that only template (GitOps diff/apply) must pin an existingSecret
+    #    here, or each sync rotates the key and orphans sealed state.
+    existingSecret: ""
+    # -- Key within the Secret that holds the state-encryption key.
+    secretKey: "state-key"
 
 # ===========================================================================
 # MCPG Store Configuration
@@ -525,13 +559,14 @@ cluster:
 # See apps/gateway/docs/configuration.md for all options.
 # Environment variables with MCPG_ prefix can override any field.
 #
-# NOTE: the `cluster:` and `nats:` sections are auto-generated from the
-# NATS / Redis settings above. Redis is wired via `cluster.kind: redis`
-# only — there is no separate top-level `redis:` block (T3-8, 2026-05-04).
-# Any values you set here for `cluster:` / `nats:` are overridden by the
-# auto-wiring logic in the configmap template UNLESS you put them under
-# `extraConfig:` (which merges last and wins). Use `extraConfig.cluster:`
-# for custom cluster.kind config (consul, etcd, TLS, replicas, …).
+# NOTE: the `cluster:` section is auto-generated from the NATS / Redis
+# settings above. Redis is wired via `cluster.kind: redis` only — there
+# is no separate top-level `redis:` / `nats:` block.
+# A `cluster:` block set here suppresses the auto-wiring and is rendered
+# as-is; `extraConfig:` merges last and wins over both. Use
+# `extraConfig.cluster:` for custom cluster.kind config (TLS,
+# replicas, …). Either block also satisfies the multi-instance
+# render guard (see MULTI-INSTANCE DEPLOYMENT at the top).
 # ---------------------------------------------------------------------------
 config:
   features:

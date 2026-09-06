@@ -54,18 +54,23 @@ Deployment mode: MULTI-INSTANCE
   Redis:   external ({{ .Values.externalRedis.url }})
   {{- end }}
 {{- else }}
+{{- /* The configmap guard refuses an uncoordinated multi-instance render,
+    so reaching this branch means the operator supplied the cluster block
+    directly (config.cluster or extraConfig.cluster, the latter wins). */}}
+  {{- $opCluster := ((.Values.extraConfig | default dict).cluster) | default ((.Values.config | default dict).cluster) | default dict }}
+  Backend: operator-supplied cluster block (kind: {{ $opCluster.kind | default "unset" }})
 
-  *** WARNING ***
-  You are running {{ .Values.replicaCount }}+ replicas WITHOUT a distributed backend.
-  Server-initiated messages (elicitation, sampling, pipeline results) will
-  only reach the instance holding the client's SSE stream. This WILL cause
-  failures for pipelines with suspend/resume steps.
-
-  Fix: enable a distributed backend:
-    --set nats.enabled=true                              # bundled NATS
-    --set redis.enabled=true                             # bundled Redis
-    --set externalNats.enabled=true,externalNats.url=... # external NATS
-    --set externalRedis.enabled=true,externalRedis.url=... # external Redis
+  The gateway refuses a clustered boot without a state-encryption key:
+  your block must set `state_encryption_key_env` (deliver the env var via
+  extraEnv) or `allow_plaintext_state: true`.
+{{- end }}
+{{- if (include "mcpg.autoWiredCluster" .) }}
+  State key: Secret {{ include "mcpg.stateKeySecretName" . }} (key `{{ include "mcpg.stateKeySecretKey" . }}`) → MCPG_CLUSTER_STATE_KEY
+           shared coordinator state is sealed (XChaCha20-Poly1305)
+  {{- if not .Values.cluster.stateEncryption.existingSecret }}
+           the Secret is chart-generated; `helm upgrade` keeps it, but
+           template-only pipelines must pin cluster.stateEncryption.existingSecret
+  {{- end }}
 {{- end }}
 {{- if or $natsAvail $redisAvail }}
   {{- if or .Values.nats.enabled .Values.redis.enabled }}
