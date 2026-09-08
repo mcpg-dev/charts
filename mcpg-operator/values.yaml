@@ -22,7 +22,7 @@ global:
   image:
     # -- Registry namespace + path the image NAME is joined onto. Empty
     # publishes at host root.
-    repositoryPrefix: mcpg-dev/source-code
+    repositoryPrefix: mcpg-dev
     # -- Registry host every first-party image is pulled from. Left UNSET
     # rather than defaulted here so bundled third-party subcharts that read
     # this same key never see a value they should not act on; the `ghcr.io`

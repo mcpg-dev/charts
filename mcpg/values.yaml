@@ -58,7 +58,7 @@ global:
   image:
     # -- Registry namespace + path the image NAME is joined onto. Empty
     # publishes at host root.
-    repositoryPrefix: mcpg-dev/source-code
+    repositoryPrefix: mcpg-dev
     # -- Registry host every first-party image is pulled from. Left UNSET
     # rather than defaulted to `ghcr.io` here on purpose: the bundled nats
     # subchart reads this very key as a blanket registry for its own images
@@ -80,7 +80,7 @@ image:
   # -- Container image NAME, joined onto `global.image.repositoryPrefix`. A
   # value containing a `/` is taken as an already-qualified repository and the
   # prefix is not prepended, so the image can live outside the prefix layout.
-  repository: gateway
+  repository: mcpg
   # -- Container image registry host. Absent (the default) inherits
   # `global.image.registry`; set it to pin this chart alone, or set it to ""
   # for a host-less reference.
