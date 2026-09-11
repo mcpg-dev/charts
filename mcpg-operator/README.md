@@ -4,19 +4,26 @@ Installs the MCPG Kubernetes operator into a cluster.
 
 ## TL;DR
 
-> **Beta note:** the chart is not yet published to a public registry —
-> `https://charts.mcpg.dev` and `oci://ghcr.io/mcpg-dev/source-code/charts` are
-> reserved but not live (tracked in
-> [`docs/iac/DEFERRED.md`](https://mcpg.dev/docs/iac/)). Install from a local
-> checkout for now. The admission webhook fails closed, so TLS must be real —
-> enable cert-manager (recommended) or pre-provision the `tls.secretName` Secret.
+> **Beta note:** the chart is published to
+> `oci://ghcr.io/mcpg-dev/charts/mcpg-operator`, and that OCI repository is the
+> only distribution channel — there is no classic Helm repository to
+> `helm repo add`. The admission webhook fails closed, so TLS must be real —
+> enable cert-manager (recommended) or pre-provision the `tls.secretName`
+> Secret.
 
 ```bash
-helm install mcpg-operator ./helm/charts/mcpg-operator \
+helm install mcpg-operator oci://ghcr.io/mcpg-dev/charts/mcpg-operator \
   --namespace mcpg-system \
   --create-namespace \
+  --version 0.1.0-beta.18 \
   --set certManager.enabled=true
 ```
+
+Charts are versioned independently — take `--version` from this chart's own
+`chart-mcpg-operator@v{version}` release tag. Always pass it: an omitted
+`--version` resolves by SemVer order over the registry tags, which is not the
+same as the most recently published chart. Installing from a local checkout
+(`./helm/charts/mcpg-operator`) also works.
 
 ## Prerequisites
 
@@ -32,7 +39,7 @@ The key surfaces:
 | Group | Purpose |
 |---|---|
 | `image.*` | Operator container image. `image.repository` is the image NAME (`mcpg-operator`), joined onto `global.image.*` below; a value containing a `/` is used as an already-qualified repository. |
-| `global.image.*` | `registry` (host, defaults to `ghcr.io`) + `repositoryPrefix` (`mcpg-dev/source-code`). Together they resolve the default `ghcr.io/mcpg-dev/source-code/mcpg-operator:<chart appVersion>`; repoint both for a mirrored install. |
+| `global.image.*` | `registry` (host, defaults to `ghcr.io`) + `repositoryPrefix` (`mcpg-dev`). Together they resolve the default `ghcr.io/mcpg-dev/mcpg-operator:<chart appVersion>`; repoint both for a mirrored install. |
 | `serviceAccount.*` | Operator's ServiceAccount + IRSA / GKE WI annotations. |
 | `webhook.*` | Validating webhook config (failurePolicy, bind address). |
 | `certManager.*` | Auto-generated TLS via cert-manager. Recommended for production. |

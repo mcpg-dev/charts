@@ -265,7 +265,7 @@ extraEnv:
 ### Image
 
 The reference is composed as `<registry>/<repositoryPrefix>/<repository>:<tag>`,
-so the default resolves to `ghcr.io/mcpg-dev/source-code/gateway:<appVersion>`.
+so the default resolves to `ghcr.io/mcpg-dev/mcpg:<appVersion>`.
 The two `global.image.*` keys are what an air-gapped or mirrored install
 repoints; Helm merges `global` into subcharts, so an umbrella chart sets them
 once for every mcpg chart underneath it.
@@ -273,8 +273,8 @@ once for every mcpg chart underneath it.
 | Parameter | Description | Default |
 |-----------|-------------|---------|
 | `global.image.registry` | Registry host for first-party images | unset (helper default `ghcr.io`) |
-| `global.image.repositoryPrefix` | Registry namespace + path the image name is joined onto | `mcpg-dev/source-code` |
-| `image.repository` | Container image NAME. A value containing a `/` is treated as an already-qualified repository and the prefix is not prepended. | `gateway` |
+| `global.image.repositoryPrefix` | Registry namespace + path the image name is joined onto | `mcpg-dev` |
+| `image.repository` | Container image NAME. A value containing a `/` is treated as an already-qualified repository and the prefix is not prepended. | `mcpg` |
 | `image.registry` | Per-chart registry host; overrides `global.image.registry` | unset |
 | `image.tag` | Container image tag | `""` (uses `.Chart.AppVersion`) |
 | `image.pullPolicy` | Image pull policy | `IfNotPresent` |
@@ -661,7 +661,7 @@ config:
     - id: dev.mcpg.backend.mock
       class: backend
       source:
-        oci: "ghcr.io/mcpg-dev/source-code/plugins/backend-mock:0.0.1-alpha.10"
+        oci: "ghcr.io/mcpg-dev/plugins/backend-mock"
   mcp:
     capabilities:
       tools:

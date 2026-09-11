@@ -167,11 +167,18 @@ operator:
   logFilter: "mcpg_operator=info,kube=warn"
   # -- Log format: `pretty` | `json`.
   logFormat: "json"
-  # -- Image name the operator falls back to for gateways whose CR omits
-  # `spec.image.repository`. Composed against the global OCI coordinates, so it
-  # is a bare name rather than a path. Only takes effect once a global
-  # coordinate is set; otherwise the operator's compiled-in default applies.
-  gatewayImageName: "gateway"
+  # -- Image the operator falls back to for gateways whose CR omits
+  # `spec.image.repository`. A bare name is joined onto the global OCI
+  # coordinates (`global.image.registry` + `global.image.repositoryPrefix`);
+  # a value containing `/` is an already-qualified path joined onto the
+  # registry host only. Takes effect once a global coordinate is set;
+  # otherwise the operator's compiled-in default (the public
+  # `ghcr.io/mcpg-dev/mcpg`) applies. The public gateway image is `mcpg`;
+  # the internal channel names its gateway image `gateway`, so an install
+  # whose prefix is the internal channel must set the qualified public path
+  # (`mcpg-dev/mcpg`) here — the bare name would compose into a repository
+  # that does not exist.
+  gatewayImageName: "mcpg"
   # -- Periodic resync interval in seconds (jittered ±20%).
   resyncIntervalSecs: 600
   # -- Per-controller concurrent reconcile budget.

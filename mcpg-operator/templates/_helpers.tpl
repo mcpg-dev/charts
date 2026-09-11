@@ -122,12 +122,15 @@ own image so one setting repoints both.
 
 Renders empty when the composition equals the operator's compiled-in default,
 so an install that has not moved its registry emits no env var and existing
-pods are not restarted by an upgrade that changes nothing. The literal below is
-the `internal` channel of tools/release/oci-registry.json; selftest-oci-registry
-asserts the two agree.
+pods are not restarted by an upgrade that changes nothing. The literal below
+must equal `DEFAULT_GATEWAY_IMAGE_REPOSITORY` in k8s/operator/src/lib.rs — it
+is the value this helper suppresses — and selftest-oci-registry asserts that.
+This chart is installed by people outside the project, so that default is the
+PUBLIC channel; the gateway image is named `mcpg` there and `gateway`
+internally, which is why the name is a value rather than a literal.
 */}}
 {{- define "mcpg-operator.gatewayImageRepository" -}}
-{{- $builtin := "ghcr.io/mcpg-dev/source-code/gateway" -}}
+{{- $builtin := "ghcr.io/mcpg-dev/mcpg" -}}
 {{- $global := (.Values.global | default dict).image | default dict -}}
 {{- $ref := "" -}}
 {{- if or (hasKey $global "registry") $global.repositoryPrefix -}}

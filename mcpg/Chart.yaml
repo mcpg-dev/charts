@@ -2,7 +2,7 @@ apiVersion: v2
 name: mcpg
 description: Model Context Protocol Gateway — production-grade MCP proxy with identity, policy, payments, and plugin extensibility.
 type: application
-version: 0.1.0-beta.16
+version: 0.0.0
 appVersion: "0.1.0"
 kubeVersion: ">=1.26.0-0"
 home: https://github.com/mcpg-dev/source-code
