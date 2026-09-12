@@ -554,6 +554,27 @@ spec:
                       type: object
                     type: array
                 type: object
+              secretMounts:
+                description: |-
+                  Secrets in the gateway's namespace mounted read-only into the
+                  gateway container, one file per key under `mountPath`. Unlike
+                  `envFromSecrets`, a mounted Secret follows the object: kubelet
+                  rewrites the files when the Secret changes, so a value the gateway
+                  reads from disk (`${secret.NAME}`) can rotate without a pod restart.
+                items:
+                  description: |-
+                    A Secret mounted as files: `name` is the Secret, `mountPath` the
+                    directory the container sees its keys under (one file per key).
+                  properties:
+                    mountPath:
+                      type: string
+                    name:
+                      type: string
+                  required:
+                  - mountPath
+                  - name
+                  type: object
+                type: array
               service:
                 nullable: true
                 properties:
