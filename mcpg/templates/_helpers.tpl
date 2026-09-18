@@ -102,10 +102,13 @@ prefix layout.
 {{- end }}
 
 {{/*
-Config checksum annotation — triggers rolling restart on config change
+Config checksum annotation — triggers rolling restart on config change.
+Hashes the ConfigMap's data only: its metadata carries `helm.sh/chart`,
+which changes on every chart version and would roll the gateways with an
+unchanged config.
 */}}
 {{- define "mcpg.configChecksum" -}}
-checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+checksum/config: {{ pick (include (print $.Template.BasePath "/configmap.yaml") . | fromYaml) "data" | toYaml | sha256sum }}
 {{- end }}
 
 {{/* ======================================================================

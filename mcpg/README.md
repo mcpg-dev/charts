@@ -31,6 +31,15 @@ helm install mcpg ./helm/charts/mcpg \
 helm install mcpg ./helm/charts/mcpg -f my-values.yaml
 ```
 
+## Upgrade
+
+`helm upgrade` rolls the gateway pods only when the rendered config changes:
+the `checksum/config` annotation hashes the ConfigMap data, not the chart
+version, so a version-only bump leaves the pods in place. The one exception
+is the upgrade onto the chart that introduced the data-only hash — the
+annotation's form changes and the pods roll once; later version-only bumps
+do not roll them.
+
 ## Uninstall
 
 ```bash

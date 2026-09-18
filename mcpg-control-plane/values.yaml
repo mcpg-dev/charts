@@ -127,8 +127,32 @@ cp:
   # strategy. Never set it on a sqlite install.
   assumeExternalDbUrl: false
 
-  # gRPC TLS for the gateway↔CP channel. The CP mints its own CA
-  # at first boot; agents fetch it via /v1/ca-cert.pem.
+  # gRPC TLS for the gateway↔CP channel. The CP mints its own CA at first
+  # boot; a self-hosted agent fetches it via /v1/ca-cert.pem.
+  #
+  # Turning this on is a FLAG DAY for managed tenants, because tonic serves
+  # one port: the moment it flips, a plaintext dial stops working. A managed
+  # pod's state dir is ephemeral, so every replacement pod does a cold
+  # Register and needs the CA in its own config.
+  #
+  # The CA is delivered to every enrolling instance as
+  # `gateway.control_plane.bootstrap_ca_pem` whether or not this is on, and an
+  # agent selects TLS from the endpoint SCHEME — so the CA sits inert next to
+  # an `http://` endpoint. That is what makes the CA stageable: republish
+  # every tenant first, confirm each config carries the key, and only then
+  # turn this on and move MCPG_CP_GRPC_ADVERTISE_URL to `https://` (the
+  # platform umbrella derives that scheme from this flag). Flipping before
+  # the republish strands every instance that has not been re-rendered.
+  #
+  # The scheme is NOT stageable: the flip restarts the CP and every agent
+  # then redials the `http://` URL still in its config, so each tenant's
+  # control channel stays down until it is republished a SECOND time, after
+  # the flip. The data plane keeps serving throughout. Rollback is one flag
+  # only until that second sweep has re-rendered a tenant with `https://`.
+  #
+  # The server certificate is minted at boot over `external_url`'s host plus
+  # MCPG_CP_GRPC_ADVERTISE_URL's host. If tenants dial a name that is neither,
+  # the handshake fails on a missing SAN and reads like a bad CA.
   grpcTls: false
   grpcMtls: false
 
