@@ -184,13 +184,15 @@ operator:
   # -- Per-controller concurrent reconcile budget.
   reconcileConcurrency: 8
   # -- Backend plugin ids the gateway controller injects as `plugins[]`
-  # entries into every MANAGED-CLOUD gateway config (`spec.cloud` set),
-  # loading the cdylibs baked into the published gateway images under
-  # `/usr/local/lib/mcpg/plugins/<id>/plugin.so`. Three states:
-  # `null` (default) = the standard first-party backend set
-  # (mock/http/command/graphql/grpc/openapi); a comma-separated
-  # string = replace the set; `""` = disable the injection. Self-host
-  # CRs never receive these entries.
+  # entries into every MANAGED-CLOUD gateway config (`spec.cloud` set).
+  # Each entry fetches `ghcr.io/mcpg-dev/plugins/<name>` at the operator's
+  # default plugin version (`MCPG_DEFAULT_PLUGIN_VERSION` under `extraEnv`)
+  # — the gateway images bundle no plugins. Three states: `null` (default)
+  # = the standard first-party backend set (mock/http/command/graphql/
+  # openapi); a comma-separated string = replace the set; `""` = disable
+  # the injection. The loader entries for a configured sink or cluster
+  # coordinator are rendered regardless. Self-host CRs never receive any
+  # of these entries.
   cloudDefaultPlugins: null
   # Default OTLP traces destination for CLOUD-provisioned gateways: rendered
   # tenant configs with no authored observability.traces get traces enabled
