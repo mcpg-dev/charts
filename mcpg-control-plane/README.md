@@ -165,6 +165,10 @@ helm upgrade cp ./helm/charts/mcpg-control-plane \
   --set 'extraEnvFrom[0].secretRef.name=cp-db-env'   # provides MCPG_CP_DB_URL
 ```
 
+`extraEnvGroups` carries the same entries as named groups, for a values
+file that is layered on top: a group is dropped with `<group>: null`,
+where a list would have to be restated whole.
+
 Load-balance both `:7843` (HTTP) and `:7844` (gRPC); agents pin their
 channel to whichever replica their TCP connection landed on, and
 cross-replica config pushes route through the database.

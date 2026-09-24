@@ -165,6 +165,14 @@ spec:
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
+            {{- /* Groups render in name order; entries keep their order within
+                   a group, so a dependent-env expansion can reference an
+                   earlier entry of the same group. */}}
+            {{- range $group, $entries := .Values.extraEnvGroups }}
+            {{- with $entries }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+            {{- end }}
           {{- with .Values.extraEnvFrom }}
           envFrom:
             {{- toYaml . | nindent 12 }}

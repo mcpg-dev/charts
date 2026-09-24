@@ -5,7 +5,6 @@ metadata:
 spec:
   group: mcpg.dev
   names:
-    categories: []
     kind: MCPGGateway
     plural: mcpggateways
     shortNames:

@@ -5,7 +5,6 @@ metadata:
 spec:
   group: mcpg.dev
   names:
-    categories: []
     kind: MCPGServer
     plural: mcpgservers
     shortNames:

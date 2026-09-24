@@ -358,6 +358,10 @@ externalDatabase:
 # chart no longer emits MCPG_CP_DB_URL unless cp.dbUrl/postgresql/
 # externalDatabase/persistence is set, so an envFrom value is not shadowed.
 extraEnv: []
+# The same entries, in named groups. A values file layered on top can drop
+# one group with `<group>: null` where a list would have to be restated
+# whole. Groups render in name order, entries in list order.
+extraEnvGroups: {}
 extraEnvFrom: []
 
 # Extra volumes + mounts (advanced). On the Postgres path the sqlite `data`
