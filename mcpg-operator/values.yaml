@@ -179,6 +179,11 @@ operator:
   # (`mcpg-dev/mcpg`) here — the bare name would compose into a repository
   # that does not exist.
   gatewayImageName: "mcpg"
+  # -- Tag the operator falls back to for gateways whose CR omits
+  # `spec.image.tag`. Empty = the gateway release this chart was cut with
+  # (the chart's `mcpg.dev/gateway-version` annotation). A chart installed
+  # from a source checkout carries no such release, so set this there.
+  gatewayImageTag: ""
   # -- Periodic resync interval in seconds (jittered ±20%).
   resyncIntervalSecs: 600
   # -- Per-controller concurrent reconcile budget.
@@ -199,6 +204,11 @@ operator:
   # through the dev.mcpg.observability.otlp sink at this URL (point it at an
   # in-cluster collector). "" = no injection.
   defaultOtlpTracesUrl: ""
+  # A public https:// URL on port 443 that CLOUD-provisioned gateways with MCP
+  # Events on fetch when webhook delivery starts, to show the tenant egress
+  # policy lets callbacks out (mcpg_events_egress_probe_ok). Pick one outside
+  # the platform. "" = no probe.
+  eventsEgressProbeUrl: ""
   # Extra pod annotations stamped on every rendered gateway pod, as
   # comma-separated key=value pairs (a CR's own spec.podAnnotations wins on
   # collision) — e.g. "prometheus.io/scrape=true,prometheus.io/port=8080".

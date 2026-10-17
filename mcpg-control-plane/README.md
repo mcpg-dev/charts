@@ -52,34 +52,34 @@ Production knobs are below.
 - [ ] **gRPC TLS** — `--set cp.grpcTls=true` so gateway agents
       negotiate TLS on port 7844. The CP mints its own CA at
       first boot; agents fetch it via `/v1/ca-cert.pem`.
-- [ ] **License** (paid self-host only) — `license.secretRef` +
-      `license.pubkeyPem`/`license.pubkeySecretRef`. Skip for
+- [ ] **License** (paid self-host only) — `license.secretRef`. Skip for
       OSS/community installs.
 
 ## Offline license (self-host enterprise)
 
-A paid self-host install activates by mounting the license JWT issued
-offline with `mcpg-license issue` (no cloud round-trip):
+A paid self-host install activates by mounting the license JWT MCPG
+issued it (no cloud round-trip):
 
 ```bash
-kubectl create secret generic mcpg-license \
-  --from-file=license.jwt=acme.lic \
-  --from-file=pubkey.pem=lic.pub.pem
+kubectl create secret generic mcpg-license --from-file=license.jwt=acme.lic
 
 helm upgrade cp ./helm/charts/mcpg-control-plane \
-  --set license.secretRef=mcpg-license \
-  --set license.pubkeySecretRef=mcpg-license
+  --set license.secretRef=mcpg-license
 ```
 
-The chart mounts the Secret read-only and sets `MCPG_CP_LICENSE_FILE` +
-`MCPG_CP_LICENSE_PUBKEY_PEM`. The CP verifies the token against the key
-at **every boot** and installs it for the org named by the license's
-`tenant_slug` (creating the org when absent; issue with
-`--tenant-slug default` to license the bootstrap org of a single-tenant
-install). Verification is fail-closed: a malformed, expired, tampered,
-or key-mismatched license **refuses boot** instead of silently running
-community. Rotation/renewal is restart-driven — update the Secret and
-restart the Deployment (`kubectl rollout restart deploy/<name>`).
+The chart mounts the Secret read-only and sets `MCPG_CP_LICENSE_FILE`.
+No key is configured: the CP verifies the token against the MCPG issuer
+keys built into it at **every boot** and installs it for the org named by
+the license's `tenant_slug` (creating the org when absent; a license
+issued with `--tenant-slug default` licenses the bootstrap org of a
+single-tenant install). Verification is fail-closed: a malformed,
+tampered, or untrusted license **refuses boot** instead of silently
+running community. An expired license warns from 30 days before expiry,
+keeps its plan for 14 days after, and then the CP runs the community tier
+— expiry never refuses boot. Rotation/renewal is restart-driven — update
+the Secret and restart the Deployment
+(`kubectl rollout restart deploy/<name>`). `license.pubkeyPem` /
+`license.pubkeySecretRef` are deprecated and ignored.
 
 ## Database modes
 
@@ -119,7 +119,7 @@ common knobs are:
 | `auth.mode`             | `none`                              | `none` / `oidc` / `mock`.                                     |
 | `auth.oidc.*`           | unset                               | OIDC issuer, client id, client secret (Secret-injected).      |
 | `license.secretRef`     | unset                               | Existing Secret with the offline license JWT (self-host enterprise). |
-| `license.pubkeyPem` / `license.pubkeySecretRef` | unset       | License verification key (Ed25519 SPKI PEM), inline or Secret-sourced. |
+| `license.pubkeyPem` / `license.pubkeySecretRef` | unset       | Deprecated and ignored: the CP trusts only the MCPG issuer keys built into it. |
 | `persistence.enabled`   | `false`                             | PVC for SQLite when no Postgres is configured.                |
 | `ingress.enabled`       | `false`                             | Standard Ingress for the HTTP UI.                             |
 | `postgresql.enabled`    | `false`                             | Bundle Bitnami Postgres sub-chart.                            |

@@ -40,6 +40,15 @@ is the upgrade onto the chart that introduced the data-only hash — the
 annotation's form changes and the pods roll once; later version-only bumps
 do not roll them.
 
+The chart's default `config.governance.policy.tool_access.default_minimum_trust`
+is `header_asserted`: a binding that names no `governance.minimum_trust` of its
+own refuses anonymous callers. Charts before this default set
+`unauthenticated`. A release that relied on it for public tools gives each of
+them `governance.minimum_trust: unauthenticated` (see the example under
+[MCPG Configuration](#mcpg-configuration)); setting the default back to
+`unauthenticated` opens every binding without a floor of its own to anonymous
+callers.
+
 ## Uninstall
 
 ```bash
@@ -68,6 +77,8 @@ Requires a distributed backend for session/pipeline/task stores and the delivery
 **The chart enforces this at render time.** `replicaCount > 1` (or `autoscaling.enabled=true`) with no coordination backend configured fails `helm template` / `helm install` with remediation steps. Any of the options below satisfies the requirement, as does a custom `cluster:` block under `config:` or `extraConfig:` (see [Backend Auto-Wiring](#backend-auto-wiring)) — the chart takes an operator-supplied cluster block as authoritative and does not validate its contents.
 
 **Clustered state is sealed by default.** On every auto-wired path (Options A–D below) the rendered `cluster:` block sets `state_encryption_key_env: MCPG_CLUSTER_STATE_KEY` and the deployment injects that env var from a Secret: `cluster.stateEncryption.existingSecret` when set (key `cluster.stateEncryption.secretKey`, default `state-key`), otherwise a chart-created Secret `<fullname>-cluster-state` holding a generated key (32 random bytes, URL-safe base64 — the format the gateway accepts). Helm `lookup` keeps the generated key stable across `helm upgrade`, but a plain `helm template` mints a fresh key every render — GitOps / template-only pipelines must pin `existingSecret`. A custom `cluster:` block under `config:` / `extraConfig:` is rendered as-is: set `state_encryption_key_env` there yourself (delivering the env var via `extraEnv`) or set `allow_plaintext_state: true`, or the gateway refuses to boot.
+
+**The coordinator is a plugin.** `cluster.kind: nats` or `redis` selects a coordinator the gateway image does not carry, and the gateway refuses to boot until a `plugins[]` entry loads it. Whatever sets the kind (Options A–D, `config.cluster` or `extraConfig.cluster`), the chart adds the entry for `dev.mcpg.cluster.<kind>` unless your config already has one with that `id` or `ref`, and sets `gateway.plugin_registry.cache_dir` to `/var/lib/mcpg/plugin-cache` unless you set it. Each replica pulls the plugin when it starts, from `ghcr.io/mcpg-dev/plugins` by default (`global.image.*` moves it with the image), so the pods need egress to that registry or to your mirror of it. The coordinators are Enterprise plugins: the gateway loads one only under a licence that entitles `cluster.*` plugins, or, outside production, with `license.non_production_use: true` (for example `extraConfig.license.non_production_use: true`).
 
 **Option A — Bundled NATS (recommended)**
 
@@ -138,7 +149,7 @@ When a distributed backend is available (bundled subchart or external), the char
 
 ```yaml
 nats:
-  enabled: true        # → renders `cluster: { kind: nats, servers: [nats://nats:4222] }`
+  enabled: true        # → renders `cluster: { kind: nats, servers: [nats://nats:4222], node: { id: ${env.HOSTNAME} } }`
 # OR:
 redis:
   enabled: true        # → renders `cluster: { kind: redis, url: redis://redis:6379, key_prefix: mcpg:cluster: }`
@@ -147,6 +158,8 @@ externalNats:
   enabled: true
   url: "nats://nats.prod.internal:4222"
 ```
+
+The nats coordinator refuses to start without an id unique to each replica. The auto-wired block takes the pod name, which the container runtime exports as `HOSTNAME`. A nats block you supply under `config.cluster`, or under `extraConfig.cluster` with no bundled or external NATS enabled, must set `node.id` itself.
 
 **Per-capability override** is now in-process only (`memory` / `file`). It exists to pin a specific capability away from the cluster — e.g., session state on local disk instead of redis:
 
@@ -162,16 +175,23 @@ extraConfig:
 
 For redis or nats capability state, set `cluster.kind` once — operators cannot open per-capability redis / nats connections in-gateway. The previous `storeBackend.{sessionStore,pipelineStore,taskStore}` knobs are gone.
 
-**Custom cluster config** (TLS, replicas, lease TTLs, …) goes under `extraConfig.cluster:`:
+**Custom cluster config** (TLS, replicas, lease TTLs, …) goes under `extraConfig.cluster:`. The chart renders that block as-is, so it must name the state-encryption key itself, and `extraEnv` delivers the key (URL-safe base64 of 32 bytes, e.g. `head -c32 /dev/urandom | basenc --base64url`) from a Secret you create. The gateway refuses a clustered boot without one. The chart still adds the coordinator's `plugins[]` entry, and the licence requirement above applies:
 
 ```yaml
 extraConfig:
   cluster:
     kind: redis
     url: rediss://redis-cluster.svc:6380
-    key_prefix: mcpg:prod:
+    key_prefix: "mcpg:prod:"
     lease_ttl_ms: 60000
     peer_ttl_ms: 90000
+    state_encryption_key_env: MCPG_CLUSTER_STATE_KEY
+extraEnv:
+  - name: MCPG_CLUSTER_STATE_KEY
+    valueFrom:
+      secretKeyRef:
+        name: mcpg-cluster-state
+        key: state-key
 ```
 
 ---
@@ -210,10 +230,8 @@ config:
   governance:
     policy:
       tool_access:
+        # Every binding that names no floor of its own is `verified`.
         default_minimum_trust: verified
-        rules:
-          - tool_name: "public.*"
-            minimum_trust: unauthenticated
 
     access:
       oidc_oauth:
@@ -231,6 +249,10 @@ config:
       tools:
         - name: weather.get_forecast
           description: Get weather forecast
+          # A public tool lowers its own floor; `tool_access.rules[]` match
+          # one exact name each, never a pattern.
+          governance:
+            minimum_trust: unauthenticated
           backend:
             kind: http
             url: http://weather-svc:8080/api/forecast
@@ -238,16 +260,16 @@ config:
             timeout_ms: 5000
 ```
 
-The `extraConfig` block is deep-merged on top and can be used to set advanced fields or force-override auto-wired values (nats, redis, store sections):
+The `extraConfig` block is deep-merged on top and can be used to set advanced fields or force-override auto-wired values (nats, redis, store sections). For example, to write the audit log to a fixed file on the data volume instead of `./mcpg-audit.log`:
 
 ```yaml
 extraConfig:
-  guardrails:
-    pre_execution:
-      - name: content_scanner
-        url: http://scanner:8080/scan
-        timeout_ms: 3000
-        on_error: deny
+  governance:
+    audit:
+      sinks:
+        - kind: dev.mcpg.builtin.audit.local-file
+          config:
+            path: /var/lib/mcpg/audit.log
 ```
 
 ### Environment Variable Overrides
@@ -401,14 +423,14 @@ touches a third-party image.
 | `networkPolicy.egressTo` | Egress destinations | `[]` |
 | `networkPolicy.additionalEgressRules` | Extra egress rules | `[]` |
 
-When a bundled NATS or Redis subchart is enabled, the NetworkPolicy automatically allows egress to their pods.
+When a bundled NATS or Redis subchart is enabled, the NetworkPolicy automatically allows egress to their pods. It opens nothing to the plugin registry: with a cluster coordinator configured, add an `additionalEgressRules` entry that lets the pods reach the registry over HTTPS (TCP 443).
 
 ### Monitoring
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
 | `metrics.enabled` | Enable Prometheus metrics | `false` |
-| `metrics.serviceMonitor.enabled` | Create ServiceMonitor | `false` |
+| `metrics.serviceMonitor.enabled` | Create ServiceMonitor. `/metrics` answers 503 until a `plugins[]` entry loads the `prometheus` sink, which the image does not carry | `false` |
 | `metrics.serviceMonitor.interval` | Scrape interval | `30s` |
 | `metrics.serviceMonitor.labels` | Extra labels | `{}` |
 | `metrics.prometheusRule.enabled` | Create PrometheusRule | `false` |
@@ -428,7 +450,7 @@ When a bundled NATS or Redis subchart is enabled, the NetworkPolicy automaticall
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
-| `persistence.enabled` | Enable PVC for file store | `false` |
+| `persistence.enabled` | Back `/var/lib/mcpg` with a PVC instead of an `emptyDir`. That directory is the gateway's working directory and its one writable data path: the default audit log (`./mcpg-audit.log`, never rotated) and a single-node gateway's sealed sign-in store land there, and without a PVC they end with the pod | `false` |
 | `persistence.storageClassName` | Storage class | `""` |
 | `persistence.accessModes` | Access modes | `[ReadWriteOnce]` |
 | `persistence.size` | Volume size | `1Gi` |
@@ -665,6 +687,8 @@ config:
   governance:
     policy:
       tool_access:
+        # Development only: every binding without a floor of its own
+        # admits anonymous callers.
         default_minimum_trust: unauthenticated
   plugins:
     - id: dev.mcpg.backend.mock

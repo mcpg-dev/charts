@@ -140,15 +140,11 @@ spec:
                   key: {{ .Values.auth.oidc.existingSecretKey }}
             {{- end }}
             {{- end }}
-            {{- /* Offline license (self-host enterprise): secret-mounted
-                   token + its verification public key. The CP is
-                   fail-closed (a configured token without a key, or an
-                   invalid token, refuses boot), so refuse at render time
-                   when the pairing is incomplete. */}}
+            {{- /* Offline license (self-host enterprise): the secret-mounted
+                   MCPG-issued token. The CP verifies it against the MCPG
+                   issuer keys built into it. The public-key values are
+                   deprecated; the CP ignores them and logs that it does. */}}
             {{- if .Values.license.secretRef }}
-            {{- if not (or .Values.license.pubkeyPem .Values.license.pubkeySecretRef) }}
-            {{- fail "license.secretRef is set but no verification key is configured — set license.pubkeyPem or license.pubkeySecretRef" }}
-            {{- end }}
             - name: MCPG_CP_LICENSE_FILE
               value: {{ printf "/etc/mcpg/license/%s" .Values.license.secretKey | quote }}
             {{- end }}

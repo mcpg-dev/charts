@@ -15,6 +15,13 @@ Operator image: {{ include "mcpg-operator.image" . }}
     pre-provision the Secret OR set certManager.enabled=true.
 {{- end }}
 {{- end }}
+{{- $gatewayTag := include "mcpg-operator.gatewayImageTag" . }}
+{{- if $gatewayTag }}
+✓ An MCPGGateway without spec.image.tag runs gateway {{ $gatewayTag }}.
+{{- else }}
+⚠️  No default gateway tag: set operator.gatewayImageTag, or spec.image.tag on
+    every MCPGGateway.
+{{- end }}
 
 Next steps:
 
@@ -29,8 +36,10 @@ Next steps:
     name: example
     namespace: default
   spec:
+  {{- if not $gatewayTag }}
     image:
-      tag: v1.0.0-dev
+      tag: <gateway-version>
+  {{- end }}
     replicas: 1
     config:
       gateway:

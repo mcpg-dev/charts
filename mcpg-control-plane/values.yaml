@@ -193,25 +193,24 @@ auth:
 # -----------------------------------------------------------------------------
 # Offline license (self-host enterprise).
 # -----------------------------------------------------------------------------
-# A paid self-host install drops in a license JWT issued offline by
-# `mcpg-license issue`, plus the issuer's Ed25519 public key
-# (`mcpg-license keygen --public-out`). The CP verifies the token against
-# the key at every boot and refuses to start on a malformed/expired/
-# tampered license (fail-closed). Rotation is restart-driven: update the
-# Secret and restart the Deployment. Leave everything empty for
-# OSS/community installs — the CP self-mints a Tier-0 community license.
+# A paid self-host install drops in the license JWT MCPG issued it offline
+# (`mcpg-license issue`). The CP verifies it against the MCPG issuer keys
+# built into the binary at every boot and refuses to start on a malformed,
+# tampered or untrusted license (fail-closed); an expired one keeps its
+# plan for a 14-day grace period, then the CP runs community. Rotation is
+# restart-driven: update the Secret and restart the Deployment. Leave
+# everything empty for OSS/community installs — the CP self-mints a Tier-0
+# community license.
 license:
   # Name of an EXISTING Secret holding the license token. When set, the
   # chart mounts it read-only at /etc/mcpg/license and sets
-  # MCPG_CP_LICENSE_FILE to the key below. A public key (pubkeyPem or
-  # pubkeySecretRef) is then required — the render fails without one.
+  # MCPG_CP_LICENSE_FILE to the key below.
   secretRef: ""
   # Key within that Secret that holds the token.
   secretKey: "license.jwt"
-  # The license verification public key (Ed25519 SPKI PEM), inline...
+  # Deprecated and ignored: no verification key is configured any more.
+  # The CP logs a warning when one is set; remove these.
   pubkeyPem: ""
-  # ...or sourced from an existing Secret (takes precedence over
-  # pubkeyPem when both are set).
   pubkeySecretRef: ""
   pubkeySecretKey: "pubkey.pem"
 

@@ -54,6 +54,9 @@
     {{- $natsUrl := (include "mcpg.natsUrl" .) }}
     {{- $clusterCfg := dict "kind" "nats" }}
     {{- $_ := set $clusterCfg "servers" (list $natsUrl) }}
+    {{- /* The nats coordinator requires an id unique to each replica; the
+        container runtime exports the pod name as HOSTNAME. */}}
+    {{- $_ := set $clusterCfg "node" (dict "id" "${env.HOSTNAME}") }}
     {{- if and .Values.nats.enabled (not $hasExtraCluster) }}{{- $insecure = true }}{{- end }}
     {{- if $insecure }}{{- $_ := set $clusterCfg "tls" (dict "require_tls" false) }}{{- end }}
     {{- $_ := set $clusterCfg "allow_insecure_transport" $insecure }}
@@ -69,9 +72,57 @@
   {{- end }}
 {{- end }}
 
-{{- /* ---- Merge extraConfig last (highest precedence) ---- */ -}}
+{{- /* ---- Merge extraConfig last (highest precedence) ----
+    Into a copy: the passes below amend $cfg, and the checksum annotation
+    renders this template a second time from the same .Values. */ -}}
 {{- if .Values.extraConfig }}
-  {{- $cfg = merge .Values.extraConfig $cfg }}
+  {{- $cfg = merge (deepCopy .Values.extraConfig) $cfg }}
+{{- end }}
+
+{{- /* ---- Load the cluster coordinator ----
+    `cluster.kind: nats|redis` selects a coordinator cdylib the image does
+    not carry, and the gateway refuses to boot until a `plugins[]` entry
+    loads it. The entry is appended unless one already names the plugin
+    under `id` or `ref`; a second one would fail boot as a duplicate. The
+    bare, tag-less `oci:` reference resolves against the gateway's default
+    plugin registry (MCPG_DEFAULT_PLUGIN_REGISTRY below, composed from the
+    image coordinates) at the plugin protocol tag the gateway speaks. */ -}}
+{{- $clusterKind := "" }}
+{{- if kindIs "map" $cfg.cluster }}
+  {{- $clusterKind = toString ($cfg.cluster.kind | default "") }}
+{{- end }}
+{{- if has $clusterKind (list "nats" "redis") }}
+  {{- $coordinator := printf "dev.mcpg.cluster.%s" $clusterKind }}
+  {{- $plugins := list }}
+  {{- if kindIs "slice" $cfg.plugins }}{{- $plugins = $cfg.plugins }}{{- end }}
+  {{- $declared := false }}
+  {{- range $plugins }}
+    {{- if and (kindIs "map" .) (has $coordinator (list (toString (.id | default "")) (toString (.ref | default "")))) }}
+      {{- $declared = true }}
+    {{- end }}
+  {{- end }}
+  {{- if not $declared }}
+    {{- $entry := dict "id" $coordinator "kind" "native" "class" "cluster" }}
+    {{- $_ := set $entry "source" (dict "oci" (printf "cluster-%s" $clusterKind)) }}
+    {{- $_ := set $entry "granted_capabilities" (list "network_outbound") }}
+    {{- $_ := set $cfg "plugins" (append $plugins $entry) }}
+  {{- end }}
+{{- end }}
+
+{{- /* ---- Plugin cache on the data volume ----
+    A plugin is pulled and unpacked before it loads, and the root filesystem
+    is read-only. `cache_dir` moves both caches; /var/lib/mcpg is always a
+    writable mount. */ -}}
+{{- if and (kindIs "slice" $cfg.plugins) $cfg.plugins }}
+  {{- $gateway := dict }}
+  {{- if kindIs "map" $cfg.gateway }}{{- $gateway = $cfg.gateway }}{{- end }}
+  {{- $registry := dict }}
+  {{- if kindIs "map" $gateway.plugin_registry }}{{- $registry = $gateway.plugin_registry }}{{- end }}
+  {{- if not $registry.cache_dir }}
+    {{- $_ := set $registry "cache_dir" "/var/lib/mcpg/plugin-cache" }}
+    {{- $_ := set $gateway "plugin_registry" $registry }}
+    {{- $_ := set $cfg "gateway" $gateway }}
+  {{- end }}
 {{- end }}
 
 {{- /* ---- Multi-instance requires a coordination backend ----

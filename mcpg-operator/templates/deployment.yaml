@@ -93,6 +93,10 @@ spec:
             - name: MCPG_DEFAULT_GATEWAY_IMAGE_REPOSITORY
               value: {{ . | quote }}
             {{- end }}
+            {{- with (include "mcpg-operator.gatewayImageTag" .) }}
+            - name: MCPG_DEFAULT_GATEWAY_IMAGE_TAG
+              value: {{ . | quote }}
+            {{- end }}
             - name: MCPG_OPERATOR_LEASE_NAMESPACE
               value: {{ include "mcpg-operator.namespace" . | quote }}
             # S-AUD-01 closure: the operator dynamically creates
@@ -112,6 +116,10 @@ spec:
             {{- end }}
             {{- with .Values.operator.defaultOtlpTracesUrl }}
             - name: MCPG_OPERATOR_DEFAULT_OTLP_TRACES_URL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.operator.eventsEgressProbeUrl }}
+            - name: MCPG_OPERATOR_EVENTS_EGRESS_PROBE_URL
               value: {{ . | quote }}
             {{- end }}
             {{- with .Values.operator.gatewayPodAnnotations }}

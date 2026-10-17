@@ -45,6 +45,7 @@ The key surfaces:
 | `certManager.*` | Auto-generated TLS via cert-manager. Recommended for production. |
 | `tls.secretName` | Pre-provisioned TLS Secret (used when cert-manager disabled). |
 | `operator.*` | Runtime config — log filter, watch namespace, resync interval. |
+| `operator.gatewayImageTag` | Gateway tag for an `MCPGGateway` without `spec.image.tag`. Empty = the gateway release this chart was cut with (its `mcpg.dev/gateway-version` annotation); a source checkout carries none, so set it there. |
 | `resources.*` | Operator pod resource caps (default: 100m / 128Mi → 1 / 512Mi). |
 | `serviceMonitor.*` | prometheus-operator integration. |
 

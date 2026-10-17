@@ -7,19 +7,22 @@ description: |
 
   See docs/k8s-operator/ for the full design + roadmap.
 
-# Chart version (independent of the operator binary version).
-# Bumped on every chart-shape change.
-version: 0.1.0-beta.25
+# Chart version (independent of the operator binary version). A
+# release-managed sentinel: the release cut stamps the real version into the
+# tag's tree.
+version: 0.1.0-beta.26
 
-# Operator binary version this chart is paired with (rendered
-# into the Deployment's image tag when the user doesn't override).
-appVersion: 1.0.0-dev.19
+# The operator image tag the Deployment defaults to. The release cut stamps
+# it from the mcpg-operator release (`release.chart.appVersionFrom` in
+# tools/release/projects.json); the literal here never ships.
+appVersion: "0.1.0-beta.58"
 
 type: application
-icon: https://mcpg.dev/icon.png
+icon: https://mcpg.dev/apple-touch-icon.png
 home: https://mcpg.dev
 sources:
-  - https://github.com/mcpg-dev/source-code
+  - https://github.com/mcpg-dev/charts
+  - https://github.com/mcpg-dev/mcpg-operator
 
 keywords:
   - kubernetes
@@ -30,10 +33,15 @@ keywords:
   - gateway
 
 annotations:
+  # The gateway image tag the operator gives an MCPGGateway without
+  # spec.image.tag. The release cut stamps it from the mcpg release
+  # (`release.chart.annotationsFrom` in tools/release/projects.json); the
+  # 0.0.0 here never ships and renders no default.
+  mcpg.dev/gateway-version: "0.1.0-beta.60"
   artifacthub.io/changes: |
     - kind: added
       description: Initial M0 release — MCPGGateway controller, admission webhook, metrics + healthz endpoints.
-  artifacthub.io/license: Apache-2.0
+  artifacthub.io/license: BUSL-1.1
 
 maintainers:
   - name: MCPG contributors

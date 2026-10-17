@@ -333,8 +333,15 @@ metrics:
 # ---------------------------------------------------------------------------
 # Persistence (for file-backed session store)
 # ---------------------------------------------------------------------------
+# /var/lib/mcpg is the gateway's working directory and its one writable data
+# path under the read-only root filesystem: relative writes (the default audit
+# log, ./mcpg-audit.log) and a single-node gateway's sealed sign-in store
+# (/var/lib/mcpg/oauth) land there. Without persistence it is an emptyDir, so
+# its contents end with the pod; enable this to keep them across restarts. The
+# local-file audit sink never rotates its file, so size the volume for the
+# audit volume you expect, or point `governance.audit` at another sink.
 persistence:
-  # -- Enable persistent volume for file-backed session store
+  # -- Back /var/lib/mcpg with a PersistentVolumeClaim instead of an emptyDir
   enabled: false
   # -- Storage class (empty = default)
   storageClassName: ""
@@ -520,6 +527,16 @@ externalRedis:
 # `state_encryption_key_env` there (and deliver the env var via extraEnv,
 # e.g. a secretKeyRef) or set `allow_plaintext_state: true`, else every
 # replica refuses to boot.
+#
+# The nats and redis coordinators are plugins the image does not carry. For
+# `cluster.kind: nats|redis`, from any source, the rendered config gets a
+# `plugins[]` entry for `dev.mcpg.cluster.<kind>` unless one already names it
+# (`id` or `ref`), and `gateway.plugin_registry.cache_dir` points at
+# /var/lib/mcpg/plugin-cache. Each replica pulls the plugin at start from the
+# plugin registry (ghcr.io/mcpg-dev/plugins; `global.image.*` moves it), so
+# the pods need egress to it. The coordinators are Enterprise plugins: the
+# gateway loads one only under a licence that entitles `cluster.*`, or with
+# `license.non_production_use: true` outside production.
 # ---------------------------------------------------------------------------
 cluster:
   # -- Permit a plaintext (non-TLS) coordinator transport. Maps to the
@@ -569,8 +586,8 @@ cluster:
 # render guard (see MULTI-INSTANCE DEPLOYMENT at the top).
 # ---------------------------------------------------------------------------
 config:
-  features:
-    debug_tools_enabled: false   # was `debug.enabled` pre-Layout-#6
+  feature_flags:
+    debug_tools_enabled: false
 
   gateway:
     server:
@@ -592,6 +609,9 @@ config:
             format: json
     metrics:
       enabled: true
+      # The prometheus sink is a plugin the image does not carry. Until a
+      # `plugins[]` entry loads it, the gateway logs a WARN at boot and
+      # /metrics answers 503, so a ServiceMonitor scrapes nothing.
       sinks:
         - kind: prometheus
           config:
@@ -608,9 +628,10 @@ config:
   governance:
     policy:
       tool_access:
-        default_minimum_trust: unauthenticated
-
-  bindings: []
+        # The floor of every binding that names none of its own. Anonymous
+        # callers reach only a binding that sets
+        # `governance.minimum_trust: unauthenticated` itself.
+        default_minimum_trust: header_asserted
 
 # -- Raw extra config merged into config.yaml (for advanced fields not in
 #    the config block above, or to force-override auto-wired values)

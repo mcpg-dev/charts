@@ -2,15 +2,20 @@ apiVersion: v2
 name: mcpg
 description: Model Context Protocol Gateway — production-grade MCP proxy with identity, policy, payments, and plugin extensibility.
 type: application
-version: 0.1.0-beta.22
-appVersion: "0.1.0"
+version: 0.1.0-beta.24
+# The gateway image tag the chart defaults to. The release cut stamps it from
+# the mcpg release (`release.chart.appVersionFrom` in
+# tools/release/projects.json); the literal here never ships.
+appVersion: "0.1.0-beta.60"
 kubeVersion: ">=1.26.0-0"
-home: https://github.com/mcpg-dev/source-code
+home: https://mcpg.dev
 sources:
-  - https://github.com/mcpg-dev/source-code
+  - https://github.com/mcpg-dev/charts
+  - https://github.com/mcpg-dev/mcpg
 maintainers:
-  - name: Andrii Tsok
-    email: andrii@tsok.org
+  - name: MCPG contributors
+    email: opensource@mcpg.dev
+    url: https://mcpg.dev
 keywords:
   - mcp
   - gateway
@@ -19,7 +24,7 @@ keywords:
   - model-context-protocol
   - proxy
 annotations:
-  artifacthub.io/license: AGPL-3.0-only
+  artifacthub.io/license: Apache-2.0
   artifacthub.io/category: ai-machine-learning
 dependencies:
   # Both subcharts are VENDORED UNPACKED under charts/ (committed) and the

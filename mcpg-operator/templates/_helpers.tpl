@@ -154,6 +154,22 @@ internally, which is why the name is a value rather than a literal.
 {{- end -}}
 
 {{/*
+Tag (no repository) the operator falls back to for gateways whose CR omits
+`spec.image.tag`: `operator.gatewayImageTag`, else the gateway release this
+chart was cut with (the `mcpg.dev/gateway-version` annotation the release cut
+stamps into Chart.yaml).
+
+Renders empty for the branch placeholder 0.0.0, so a chart installed from
+source emits no env var and the operator keeps its compiled-in default.
+*/}}
+{{- define "mcpg-operator.gatewayImageTag" -}}
+{{- $tag := .Values.operator.gatewayImageTag | default (index (.Chart.Annotations | default dict) "mcpg.dev/gateway-version") | default "" | toString | trim -}}
+{{- if and $tag (ne $tag "0.0.0") -}}
+{{- $tag -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
 Namespace every namespaced object renders into. The operator hard-codes
 `mcpg-system` for its plugin-Secret writes and tenant RoleBindings, so an
 umbrella chart installing from another namespace sets `namespaceOverride`
