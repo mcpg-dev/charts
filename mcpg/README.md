@@ -40,6 +40,20 @@ is the upgrade onto the chart that introduced the data-only hash — the
 annotation's form changes and the pods roll once; later version-only bumps
 do not roll them.
 
+The gateway runs in `/var/lib/mcpg`, a writable mount that is always present:
+the PVC when `persistence.enabled`, otherwise an `emptyDir`. Relative paths in
+the config (the default audit sink's `./mcpg-audit.log`) resolve there, and the
+plugin caches default to `/var/lib/mcpg/plugin-cache`. Without persistence,
+what the gateway writes there is lost when the pod is replaced. The upgrade
+onto a chart that adds this mount changes the pod spec, so the pods roll once.
+
+With `cluster.kind: nats` or `redis`, the chart adds the coordinator plugin to
+`plugins[]` unless an entry already names it under `id` or `ref`. An entry a
+release added for it stays as it is and is not duplicated.
+
+The chart's `appVersion` is the gateway image tag it installs. A gateway
+upgrade is a chart upgrade, or `image.tag` set to the release to run.
+
 The chart's default `config.governance.policy.tool_access.default_minimum_trust`
 is `header_asserted`: a binding that names no `governance.minimum_trust` of its
 own refuses anonymous callers. Charts before this default set

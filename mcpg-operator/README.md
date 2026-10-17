@@ -15,12 +15,13 @@ Installs the MCPG Kubernetes operator into a cluster.
 helm install mcpg-operator oci://ghcr.io/mcpg-dev/charts/mcpg-operator \
   --namespace mcpg-system \
   --create-namespace \
-  --version 0.1.0-beta.18 \
+  --version <chart-version> \
   --set certManager.enabled=true
 ```
 
-Charts are versioned independently — take `--version` from this chart's own
-`chart-mcpg-operator@v{version}` release tag. Always pass it: an omitted
+Charts are versioned independently — take `--version` from this chart's
+newest release in [mcpg-dev/charts](https://github.com/mcpg-dev/charts/releases)
+(`mcpg-operator <version>`). Always pass it: an omitted
 `--version` resolves by SemVer order over the registry tags, which is not the
 same as the most recently published chart. Installing from a local checkout
 (`./helm/charts/mcpg-operator`) also works.
@@ -91,6 +92,12 @@ helm upgrade mcpg-operator ./helm/charts/mcpg-operator \
 There is **no** automatic CRD pre-upgrade hook — CRD schema changes must be
 applied out-of-band (above) because Helm never upgrades its `crds/` dir. See
 `docs/k8s-operator/rfcs/0010-upgrade-strategy.md`.
+
+An `MCPGGateway` without `spec.image.tag` runs the gateway release this chart
+was cut with (the chart's `mcpg.dev/gateway-version` annotation). An operator
+upgrade therefore rolls those gateways onto the new chart's gateway release.
+To keep a gateway on its current release, set `spec.image.tag` on it, or set
+`operator.gatewayImageTag` for every gateway without one.
 
 ## Uninstall
 
