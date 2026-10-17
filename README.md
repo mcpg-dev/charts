@@ -17,7 +17,6 @@ lists its versions.
 |---|---|---|
 | `mcpg` | the MCPG gateway | Apache-2.0 |
 | `mcpg-operator` | the Kubernetes operator (CRDs + controller) | BUSL-1.1 |
-| `mcpg-control-plane` | the self-hosted control plane | BUSL-1.1 |
 
 Each chart's own README documents its values. Charts version
 independently, so releases are per chart in the OCI registry rather than
@@ -26,8 +25,8 @@ tags on this repository.
 ## Licence
 
 This repository is Apache-2.0 (`LICENSE`), except a chart directory that
-carries its own `LICENSE`: `mcpg-operator` and `mcpg-control-plane` are
-Business Source License 1.1, free for production use in your own
-organization. See <https://mcpg.dev/license>.
+carries its own `LICENSE`: `mcpg-operator` is Business Source License 1.1,
+free for production use in your own organization. See
+<https://mcpg.dev/license>.
 
 Development happens upstream — file issues here (see `CONTRIBUTING.md`).
