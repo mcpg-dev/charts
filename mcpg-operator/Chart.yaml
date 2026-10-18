@@ -10,12 +10,12 @@ description: |
 # Chart version (independent of the operator binary version). A
 # release-managed sentinel: the release cut stamps the real version into the
 # tag's tree.
-version: 0.1.0-beta.29
+version: 0.1.0-beta.30
 
 # The operator image tag the Deployment defaults to. The release cut stamps
 # it from the mcpg-operator release (`release.chart.appVersionFrom` in
 # tools/release/projects.json); the literal here never ships.
-appVersion: "0.1.0-beta.61"
+appVersion: "0.1.0-beta.62"
 
 type: application
 icon: https://mcpg.dev/apple-touch-icon.png
@@ -37,7 +37,7 @@ annotations:
   # spec.image.tag. The release cut stamps it from the mcpg release
   # (`release.chart.annotationsFrom` in tools/release/projects.json); the
   # 0.0.0 here never ships and renders no default.
-  mcpg.dev/gateway-version: "0.1.0-beta.63"
+  mcpg.dev/gateway-version: "0.1.0-beta.64"
   artifacthub.io/changes: |
     - kind: added
       description: Initial M0 release — MCPGGateway controller, admission webhook, metrics + healthz endpoints.

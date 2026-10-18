@@ -126,6 +126,27 @@ spec:
             - name: MCPG_OPERATOR_GATEWAY_POD_ANNOTATIONS
               value: {{ . | quote }}
             {{- end }}
+            {{- /* An extraEnv entry renders after the chart's own and wins
+                 silently, so a name the chart sets is refused, with the
+                 value key that sets it. */}}
+            {{- $managed := dict
+                  "POD_NAMESPACE" ""
+                  "RUST_LOG" "operator.logFilter"
+                  "MCPG_OPERATOR_LOG_FORMAT" "operator.logFormat"
+                  "MCPG_DEFAULT_GATEWAY_IMAGE_REPOSITORY" "operator.gatewayImageName"
+                  "MCPG_DEFAULT_GATEWAY_IMAGE_TAG" "operator.gatewayImageTag"
+                  "MCPG_OPERATOR_LEASE_NAMESPACE" ""
+                  "MCPG_OPERATOR_SERVICE_ACCOUNT" "serviceAccount.name"
+                  "MCPG_OPERATOR_CLOUD_DEFAULT_PLUGINS" "operator.cloudDefaultPlugins"
+                  "MCPG_OPERATOR_DEFAULT_OTLP_TRACES_URL" "operator.defaultOtlpTracesUrl"
+                  "MCPG_OPERATOR_EVENTS_EGRESS_PROBE_URL" "operator.eventsEgressProbeUrl"
+                  "MCPG_OPERATOR_GATEWAY_POD_ANNOTATIONS" "operator.gatewayPodAnnotations" }}
+            {{- range .Values.operator.extraEnv }}
+            {{- if hasKey $managed .name }}
+            {{- $key := get $managed .name }}
+            {{- fail (printf "operator.extraEnv sets %s, which the chart sets itself%s" .name (ternary (printf "; set %s instead" $key) "" (ne $key ""))) }}
+            {{- end }}
+            {{- end }}
             {{- with .Values.operator.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

@@ -216,11 +216,14 @@ operator:
   # -- Extra CLI args appended to the operator container (escape hatch for
   # flags the chart doesn't surface, e.g. `--no-leader-election`).
   extraArgs: []
-  # -- Extra env vars appended to the operator container. List of standard
-  # core/v1 EnvVar objects ({ name, value } or { name, valueFrom }).
   # Extra pod annotations (e.g. prometheus.io/scrape for annotation-model
   # collectors).
   podAnnotations: {}
+  # -- Extra env vars appended to the operator container. List of standard
+  # core/v1 EnvVar objects ({ name, value } or { name, valueFrom }). A name
+  # the chart sets itself is refused at render time: the appended entry
+  # would win silently. Set its value key instead (for example
+  # MCPG_DEFAULT_GATEWAY_IMAGE_TAG → `operator.gatewayImageTag`).
   extraEnv: []
   # -- Air-gap: mount a pre-mirrored Sigstore trust root (trusted_root.json)
   # from a ConfigMap and point cosign keyless verification at it (NO network).
