@@ -1,0 +1,279 @@
+{{- if .Values.prometheusRule.enabled }}
+# Default alerting rules for the control plane, matched to the CP's
+# /metrics families (mcpg_cp_http_requests_total,
+# mcpg_cp_license_refresh_total, mcpg_cp_license_refresh_braked_passes_total,
+# mcpg_cp_decommission_billing_holds_total, mcpg_cp_enrollments_total,
+# mcpg_cp_publishes_total, mcpg_cp_billing_write_failures_total,
+# mcpg_cp_rollup_gap_hours). The names carry the mcpg_cp_ prefix the
+# registry applies and the _total suffix the exposition adds; querying
+# the bare names matches nothing at all. Every expression is scoped by
+# job — prometheus-operator sets `job` to the scraped Service name —
+# because the CP's HTTP families use generic metric names that other
+# workloads in the same Prometheus may also emit.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "mcpg-cp.fullname" . }}
+  namespace: {{ default .Release.Namespace .Values.prometheusRule.namespace }}
+  labels:
+    {{- include "mcpg-cp.labels" . | nindent 4 }}
+    {{- with .Values.prometheusRule.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+    - name: mcpg-control-plane.rules
+      interval: {{ .Values.prometheusRule.interval }}
+      rules:
+
+        # ── Scrape-target liveness ───────────────────────────────
+        - alert: MCPGControlPlaneTargetDown
+          expr: |
+            up{job="{{ include "mcpg-cp.fullname" . }}"} == 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "MCPG control plane scrape target is down"
+            description: |
+              Prometheus cannot scrape the CP /metrics endpoint for over
+              5m. The pod is down, not Ready, or the /metrics route is
+              not being served. Sessions, enrollment, and publishes are
+              likely unavailable.
+
+        - alert: MCPGControlPlaneTargetAbsent
+          expr: |
+            absent(up{job="{{ include "mcpg-cp.fullname" . }}"})
+          for: 15m
+          labels:
+            severity: critical
+          annotations:
+            summary: "MCPG control plane scrape target has disappeared"
+            description: |
+              No `up` series exists for the CP job at all — the
+              ServiceMonitor was deleted or relabelled, or this
+              Prometheus no longer selects it. Alerting on the CP is
+              blind until the target returns.
+
+        # ── HTTP error ratio ─────────────────────────────────────
+        - alert: MCPGControlPlaneHttp5xxRatioHigh
+          expr: |
+            sum(rate(mcpg_cp_http_requests_total{job="{{ include "mcpg-cp.fullname" . }}",status=~"5.."}[5m]))
+              /
+            clamp_min(sum(rate(mcpg_cp_http_requests_total{job="{{ include "mcpg-cp.fullname" . }}"}[5m])), 1e-9)
+              > {{ .Values.prometheusRule.thresholds.http5xxRatio }}
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "MCPG control plane 5xx ratio elevated"
+            description: |
+              More than {{ .Values.prometheusRule.thresholds.http5xxRatio }}
+              of CP HTTP requests returned 5xx sustained over 10m. Break
+              down by route class:
+              sum by (route_class) (rate(mcpg_cp_http_requests_total{status=~"5.."}[5m])).
+
+        # ── License refresh loop ─────────────────────────────────
+        - alert: MCPGControlPlaneLicenseRefreshFailing
+          expr: |
+            increase(mcpg_cp_license_refresh_total{job="{{ include "mcpg-cp.fullname" . }}",outcome="error"}[1h])
+              > 0
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "MCPG control plane license refresh reporting failures"
+            description: |
+              The leader-leased license_refresh loop (15m tick) recorded
+              refresh errors within the last hour. Plan changes and
+              revocations from the federation are not propagating; check
+              CP logs and federation reachability. Scoped to
+              outcome="error" — `unlicensed` is the normal answer for an
+              org the issuer does not license, and `refreshed` is success.
+              A 404 from the issuer that is not its typed no-license answer
+              (broker disabled, edge route missing) lands here too.
+
+        - alert: MCPGControlPlaneLicenseKeptPastExpiry
+          expr: |
+            max(mcpg_cp_license_kept_past_expiry{job="{{ include "mcpg-cp.fullname" . }}"}) > 0
+          for: 15m
+          labels:
+            severity: critical
+          annotations:
+            summary: "MCPG control plane keeps expired mcpg.cloud licences because their refresh fails"
+            description: |
+              The license refresh cannot renew these orgs' licences and they
+              are past their expiry, so each keeps its plan for at most 7
+              days past it; then the org runs on the community plan and its
+              gateways lose what the plan gated. The refresh logs name each
+              org and why (issuer unreachable, a licence that does not
+              verify, the brake, a failed install). Fix the refresh before
+              the grace ends; the next pass that renews clears this.
+
+        - alert: MCPGControlPlaneLicenseLapsedWhileRefreshFails
+          expr: |
+            max(mcpg_cp_license_lapsed_while_refresh_fails{job="{{ include "mcpg-cp.fullname" . }}"}) > 0
+          labels:
+            severity: critical
+          annotations:
+            summary: "MCPG control plane dropped paying orgs to community because their licence refresh fails"
+            description: |
+              These orgs' mcpg.cloud licences expired more than 7 days ago
+              and the license refresh still cannot renew them, so they run
+              on the community plan. Fix the refresh (issuer reachability,
+              its licence signing key, the brake); the next pass that renews
+              restores each plan, or refresh one org with
+              POST /v1/admin/orgs/<org>/license/refresh.
+
+        - alert: MCPGControlPlaneLicenseDowngradesBraked
+          expr: |
+            increase(mcpg_cp_license_refresh_braked_passes_total{job="{{ include "mcpg-cp.fullname" . }}"}[30m])
+              > 0
+          labels:
+            severity: critical
+          annotations:
+            summary: "MCPG control plane held a mass license downgrade back"
+            description: |
+              A license refresh pass would have moved more paid orgs to a
+              lower plan than MCPG_CP_LICENSE_DOWNGRADE_BRAKE_MIN /
+              MCPG_CP_LICENSE_DOWNGRADE_BRAKE_RATIO allow, so it applied
+              none of them; paying tenants keep their plans while this
+              fires. The usual cause is the issuer: a federation on an empty
+              or wrong database, a stale restore, or a bad migration. Fix
+              the issuer and the next pass clears it. If the downgrades are
+              real, refresh the orgs one at a time with
+              POST /v1/admin/orgs/<org>/license/refresh, or raise the limit.
+
+        - alert: MCPGControlPlanePlanEnforcementBraked
+          expr: |
+            increase(mcpg_cp_plan_loss_braked_passes_total{job="{{ include "mcpg-cp.fullname" . }}"}[30m])
+              > 0
+          labels:
+            severity: critical
+          annotations:
+            summary: "MCPG control plane held a mass plan enforcement back"
+            description: |
+              More orgs reached the end of their plan-loss grace in one pass
+              than MCPG_CP_PLAN_ENFORCEMENT_BRAKE_MIN /
+              MCPG_CP_PLAN_ENFORCEMENT_BRAKE_RATIO allow, so none of their
+              gateways were stopped or tunnels closed; they keep running on
+              the plans they lost while this fires, until a day before their
+              gateways lapse the lost plan's licence, when each is enforced
+              anyway. Check the license issuer and the refresh loop for a
+              mass downgrade that should not have happened. If the losses are
+              real, enforce them one org at a time with `mcpg admin platform
+              enforce-plan-loss --org <org>`, or raise the limit and restart.
+              A loss the owner scheduled in advance is never held.
+
+        - alert: MCPGControlPlanePlanEnforcementFailing
+          expr: |
+            increase(mcpg_cp_plan_loss_total{outcome=~"enforcement_failed|pass_failed",job="{{ include "mcpg-cp.fullname" . }}"}[2h])
+              > 4
+          labels:
+            severity: warning
+          annotations:
+            summary: "MCPG control plane cannot bring orgs down to their plans"
+            description: |
+              A plan-loss enforcement keeps failing: a gateway the plan does
+              not cover could not be torn down (the provisioner, a cell), a
+              tunnel could not be closed, or whole reconciler passes fail
+              (outcome="pass_failed": the database, a plan-loss row listing).
+              The org keeps running what it lost until it succeeds, and a
+              failing pass also leaves mcpg_cp_plan_loss_overdue unset; the
+              CP logs name the org and the gateways, or the pass's error.
+
+        - alert: MCPGControlPlanePlanLossOverdue
+          expr: |
+            max(mcpg_cp_plan_loss_overdue{job="{{ include "mcpg-cp.fullname" . }}"}) > 0
+          for: 6h
+          labels:
+            severity: warning
+          annotations:
+            summary: "MCPG control plane keeps orgs on plans they lost past the grace"
+            description: |
+              Plan losses are still open more than an hour after their 7-day
+              grace ended, so those orgs keep running the plans they lost.
+              The brake, an expired licence the refresh cannot renew, an
+              unpaid renewal still issued its plan, or failing teardowns hold
+              them; the plan-loss reconciler logs each org and why. Fix the
+              cause; the next pass enforces them.
+
+        - alert: MCPGControlPlaneNamespaceQuotaUncontracted
+          expr: |
+            increase(mcpg_cp_namespace_quota_uncontracted_total{job="{{ include "mcpg-cp.fullname" . }}"}[1h])
+              > 0
+          labels:
+            severity: warning
+          annotations:
+            summary: "MCPG control plane published for an org with no namespace ceilings"
+            description: |
+              An org whose plan sets no tenant namespace ceilings (an
+              unlimited gateway count, as on enterprise) published or changed
+              plan with no contracted ceilings, so its namespace keeps the
+              cell's default profile, which may refuse its gateways. The CP
+              log names the org. Set the contract's ceilings with
+              `mcpg admin platform tenant-quota set --org <org> ...`; they
+              apply to its running namespaces at once.
+
+        # ── Billing ledger ───────────────────────────────────────
+        - alert: MCPGControlPlaneBillingWriteFailures
+          expr: |
+            increase(mcpg_cp_billing_write_failures_total{job="{{ include "mcpg-cp.fullname" . }}"}[1h])
+              > 0
+          labels:
+            severity: warning
+          annotations:
+            summary: "MCPG control plane lost billing writes"
+            description: |
+              A billing write failed after its usage was counted elsewhere:
+              an instance-billing event (an interval the state janitor opens
+              from the publish's intent within about 15 minutes, or one never
+              closed and billed on until the janitor reaps it), a tunnel-byte
+              row, or a gateway metrics report (calls served and never
+              billed). The CP logs name the org or instance of each failed
+              write. Check the database, then correct the affected org's
+              tunnel and call usage by hand.
+
+        - alert: MCPGControlPlaneUsageRollupBehind
+          expr: |
+            max(mcpg_cp_rollup_gap_hours{job="{{ include "mcpg-cp.fullname" . }}"}) > 1
+          for: 1h
+          labels:
+            severity: warning
+          annotations:
+            summary: "MCPG control plane usage rollup is behind"
+            description: |
+              The hourly rollup's watermark trails the last closed hour.
+              Raw usage rows are pruned within 48h (sooner on some plans),
+              after which the unrolled hours are gone from every invoice.
+
+        - alert: MCPGControlPlaneUsageRollupNearPruning
+          expr: |
+            max(mcpg_cp_rollup_gap_hours{job="{{ include "mcpg-cp.fullname" . }}"}) > 24
+          labels:
+            severity: critical
+          annotations:
+            summary: "MCPG control plane usage rollup is a day behind"
+            description: |
+              Raw usage rows are pruned within 48h (sooner on some plans).
+              Hours not rolled up by then are never billed; close the gap
+              now.
+
+        # ── Org deletion ─────────────────────────────────────────
+        - alert: MCPGControlPlaneOrgDeletionWaitingOnBilling
+          expr: |
+            increase(mcpg_cp_decommission_billing_holds_total{job="{{ include "mcpg-cp.fullname" . }}"}[30m])
+              > 0
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: "A deleted org is waiting for its subscriptions to be cancelled"
+            description: |
+              The decommission loop keeps a deleted org from finalising
+              until the federation confirms POST /v1/billing/cancel. For 30m
+              it has not: the federation is unreachable, lacks the endpoint,
+              or Stripe refused the change. The customer may still be billed
+              and the org's slug stays taken. Check the CP logs for
+              "did not confirm the subscription is cancelled".
+{{- end }}

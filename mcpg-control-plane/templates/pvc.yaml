@@ -1,0 +1,21 @@
+{{- /*
+  PVC only when persisting SQLite state. Postgres-backed installs
+  rely on the Postgres sub-chart's own storage.
+*/ -}}
+{{- if and .Values.persistence.enabled (not .Values.postgresql.enabled) (not .Values.externalDatabase.enabled) (not .Values.cp.dbUrl) -}}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "mcpg-cp.fullname" . }}-data
+  labels:
+    {{- include "mcpg-cp.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    {{- toYaml .Values.persistence.accessModes | nindent 4 }}
+  {{- with .Values.persistence.storageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.size }}
+{{- end }}

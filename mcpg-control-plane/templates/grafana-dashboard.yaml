@@ -1,0 +1,18 @@
+{{- if .Values.grafanaDashboard.enabled }}
+# Grafana dashboard JSON for the control plane. Mounted as a
+# `grafana_dashboard: "1"` labelled ConfigMap so the
+# kube-prometheus-stack Grafana sidecar auto-loads it.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "mcpg-cp.fullname" . }}-dashboard
+  namespace: {{ default .Release.Namespace .Values.grafanaDashboard.namespace }}
+  labels:
+    {{- include "mcpg-cp.labels" . | nindent 4 }}
+    {{- with .Values.grafanaDashboard.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+data:
+  mcpg-control-plane.json: |
+    {{- .Files.Get "files/grafana-dashboard.json" | nindent 4 }}
+{{- end }}
