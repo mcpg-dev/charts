@@ -213,6 +213,12 @@ operator:
   # comma-separated key=value pairs (a CR's own spec.podAnnotations wins on
   # collision) — e.g. "prometheus.io/scrape=true,prometheus.io/port=8080".
   gatewayPodAnnotations: ""
+  # -- DNS settings the operator puts on every pod it renders (gateway,
+  # MCPGServer and managed NATS pods), as a core/v1 PodDNSConfig — e.g.
+  # `options: [{name: ndots, value: "1"}]` keeps a node search domain out of
+  # external lookups. Empty takes global.podDnsConfig; both empty leave the
+  # cluster's DNS settings.
+  podDnsConfig: {}
   # -- Extra CLI args appended to the operator container (escape hatch for
   # flags the chart doesn't surface, e.g. `--no-leader-election`).
   extraArgs: []
@@ -276,6 +282,9 @@ affinity: {}
 topologySpreadConstraints: []
 priorityClassName: ""
 terminationGracePeriodSeconds: 30
+# -- DNS settings for the operator's own pod (a core/v1 PodDNSConfig). Empty
+# takes global.podDnsConfig; both empty leave the cluster's DNS settings.
+podDnsConfig: {}
 
 # ----------------------------------------------------------------------------
 # RBAC

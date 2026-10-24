@@ -427,6 +427,7 @@ touches a third-party image.
 | `tolerations` | Pod tolerations | `[]` |
 | `affinity` | Pod affinity rules | `{}` |
 | `topologySpreadConstraints` | Topology spread | `[]` |
+| `podDnsConfig` | Pod DNS settings (core/v1 PodDNSConfig), e.g. `options: [{name: ndots, value: "1"}]` | `{}` |
 
 ### Network Policy
 

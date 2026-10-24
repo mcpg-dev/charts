@@ -94,6 +94,10 @@ resources:
 nodeSelector: {}
 tolerations: []
 affinity: {}
+# DNS settings for the control-plane pod (a core/v1 PodDNSConfig, e.g.
+# options: [{name: ndots, value: "2"}]). Empty takes global.podDnsConfig;
+# both empty leave the cluster's DNS settings.
+podDnsConfig: {}
 
 # -----------------------------------------------------------------------------
 # CP server config (maps to ServerConfig fields).

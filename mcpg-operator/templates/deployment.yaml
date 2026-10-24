@@ -55,6 +55,10 @@ spec:
       topologySpreadConstraints:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- with default (.Values.global | default dict).podDnsConfig .Values.podDnsConfig }}
+      dnsConfig:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: operator
           image: {{ include "mcpg-operator.image" . }}
@@ -126,6 +130,10 @@ spec:
             - name: MCPG_OPERATOR_GATEWAY_POD_ANNOTATIONS
               value: {{ . | quote }}
             {{- end }}
+            {{- with default (.Values.global | default dict).podDnsConfig .Values.operator.podDnsConfig }}
+            - name: MCPG_OPERATOR_POD_DNS_CONFIG
+              value: {{ toJson . | quote }}
+            {{- end }}
             {{- /* An extraEnv entry renders after the chart's own and wins
                  silently, so a name the chart sets is refused, with the
                  value key that sets it. */}}
@@ -140,7 +148,8 @@ spec:
                   "MCPG_OPERATOR_CLOUD_DEFAULT_PLUGINS" "operator.cloudDefaultPlugins"
                   "MCPG_OPERATOR_DEFAULT_OTLP_TRACES_URL" "operator.defaultOtlpTracesUrl"
                   "MCPG_OPERATOR_EVENTS_EGRESS_PROBE_URL" "operator.eventsEgressProbeUrl"
-                  "MCPG_OPERATOR_GATEWAY_POD_ANNOTATIONS" "operator.gatewayPodAnnotations" }}
+                  "MCPG_OPERATOR_GATEWAY_POD_ANNOTATIONS" "operator.gatewayPodAnnotations"
+                  "MCPG_OPERATOR_POD_DNS_CONFIG" "operator.podDnsConfig" }}
             {{- range .Values.operator.extraEnv }}
             {{- if hasKey $managed .name }}
             {{- $key := get $managed .name }}
