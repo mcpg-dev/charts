@@ -6,11 +6,11 @@ description: |
   the cp-server binary, exposes HTTP + gRPC, and optionally provisions
   Postgres for multi-tenant RBAC + audit storage.
 type: application
-version: 0.1.0-beta.31
+version: 0.1.0-beta.33
 # The control-plane image tag the chart defaults to. The release cut stamps it
 # from the mcpg-control-plane-server release (`release.chart.appVersionFrom`
 # in tools/release/projects.json); the literal here never ships.
-appVersion: "0.1.0-beta.59"
+appVersion: "0.1.0-beta.61"
 kubeVersion: ">=1.26.0-0"
 home: https://mcpg.dev
 sources:
