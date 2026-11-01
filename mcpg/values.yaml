@@ -426,6 +426,11 @@ nats:
 
   # ---- Subchart values (nats-io/nats) ----
   # Override any nats subchart value here. Common overrides:
+  container:
+    image:
+      # 2.14 or later: before 2.14 a subject-filtered purge walks every block
+      # of the stream, so the KV sweep stalls MCP Events writes for seconds.
+      tag: 2.14.8-alpine
   config:
     jetstream:
       enabled: true
