@@ -13,7 +13,7 @@ This chart pairs with:
 ## TL;DR
 
 The chart is published to `oci://ghcr.io/mcpg-dev/charts/mcpg-control-plane`.
-The charts are prereleases (`0.1.0-beta.N`), so always pass `--version`:
+The charts are release candidates (`0.1.0-rc.N`), so always pass `--version`:
 
 ```bash
 helm install cp oci://ghcr.io/mcpg-dev/charts/mcpg-control-plane --version <chart-version>
