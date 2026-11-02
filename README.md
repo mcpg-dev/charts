@@ -7,7 +7,7 @@ packages:
 helm install mcpg oci://ghcr.io/mcpg-dev/charts/mcpg --version <chart-version>
 ```
 
-Always pass `--version`. The charts are prereleases (`0.1.0-beta.N`), so
+Always pass `--version`. The charts are release candidates (`0.1.0-rc.N`), so
 without it Helm skips every version, finds no chart and stops; `--devel`
 takes the newest chart instead of the one you pinned. Each chart's package page
 (`https://github.com/orgs/mcpg-dev/packages/container/package/charts%2F<chart>`)
