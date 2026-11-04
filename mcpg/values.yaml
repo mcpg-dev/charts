@@ -620,13 +620,12 @@ config:
             format: json
     metrics:
       enabled: true
-      # The prometheus sink is a plugin the image does not carry. Until a
-      # `plugins[]` entry loads it, the gateway logs a WARN at boot and
-      # /metrics answers 503, so a ServiceMonitor scrapes nothing.
-      sinks:
-        - kind: prometheus
-          config:
-            path: /metrics
+      # No sink, so /metrics is not served. The Prometheus sink is a plugin
+      # the image does not carry; to serve /metrics, list
+      #   - kind: dev.mcpg.observability.prometheus
+      # here and add its `plugins[]` row, e.g.
+      #   source: { oci: "ghcr.io/mcpg-dev/plugins/observability-prometheus:protocol-1" }
+      sinks: []
     # traces:
     #   enabled: true
     #   service_name: mcpg

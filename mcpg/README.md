@@ -237,9 +237,15 @@ config:
     metrics:
       enabled: true
       sinks:
-        - kind: prometheus
+        - kind: dev.mcpg.observability.prometheus   # serves /metrics
           config:
             path: /metrics
+
+  plugins:
+    # The image carries no plugins; the gateway fetches this one at boot.
+    - id: dev.mcpg.observability.prometheus
+      class: metrics_sink
+      source: { oci: "ghcr.io/mcpg-dev/plugins/observability-prometheus:protocol-1" }
 
   governance:
     policy:
@@ -654,7 +660,7 @@ config:
     metrics:
       enabled: true
       sinks:
-        - kind: prometheus
+        - kind: dev.mcpg.observability.prometheus   # needs its plugins[] row
           config:
             path: /metrics
     traces:
