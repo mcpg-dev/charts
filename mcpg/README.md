@@ -86,7 +86,7 @@ replicaCount: 1
 
 ### Multi-Instance
 
-Requires a distributed backend for session/pipeline/task stores and the delivery bus. Without one, each replica runs as an independent gateway: server-initiated messages (elicitation, sampling, pipeline suspend/resume) only reach the instance holding the client's SSE stream.
+Requires a distributed backend for session/pipeline/task stores and the delivery bus. Without one, each replica runs as an independent gateway: a task or a suspended request (one that waits for input) is visible only on the instance that holds it, and notifications (list changes, task status, resource updates) reach only the `subscriptions/listen` streams of the instance that raised them.
 
 **The chart enforces this at render time.** `replicaCount > 1` (or `autoscaling.enabled=true`) with no coordination backend configured fails `helm template` / `helm install` with remediation steps. Any of the options below satisfies the requirement, as does a custom `cluster:` block under `config:` or `extraConfig:` (see [Backend Auto-Wiring](#backend-auto-wiring)) — the chart takes an operator-supplied cluster block as authoritative and does not validate its contents.
 

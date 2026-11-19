@@ -198,7 +198,7 @@ autoscaling:
   targetCPUUtilizationPercentage: 70
   # -- Target memory utilization percentage
   targetMemoryUtilizationPercentage: 80
-  # -- Custom metrics for scaling (e.g., mcpg_active_sessions)
+  # -- Custom metrics for scaling (e.g., the request rate of mcpg_requests_total)
   customMetrics: []
   # -- HPA behavior for scale up/down tuning
   behavior: {}
@@ -606,7 +606,6 @@ config:
       health_path: /health
       mcp_path: /mcp
       allowed_origins: []
-      replay_window_limit: 16
       session_idle_timeout_ms: 900000
 
   observability:

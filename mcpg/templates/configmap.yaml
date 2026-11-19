@@ -127,8 +127,8 @@
 
 {{- /* ---- Multi-instance requires a coordination backend ----
     N replicas without a `cluster:` block run as N independent gateways
-    (per-replica sessions/tasks/pipelines; server-initiated delivery
-    reaches only the replica holding the client's SSE stream). Any
+    (per-replica sessions/tasks/pipelines; a notification reaches only
+    the `subscriptions/listen` streams of the replica that raised it). Any
     source of the block satisfies the guard: the auto-wire above,
     `config.cluster`, or `extraConfig.cluster`. */ -}}
 {{- if and (include "mcpg.isMultiInstance" .) (not (hasKey $cfg "cluster")) }}
@@ -136,7 +136,7 @@
   {{- if .Values.autoscaling.enabled }}
     {{- $mode = printf "autoscaling.enabled=true (%d-%d replicas)" (int .Values.autoscaling.minReplicas) (int .Values.autoscaling.maxReplicas) }}
   {{- end }}
-  {{- fail (printf `%s needs a cluster coordination backend — N replicas without one run as N independent gateways: sessions, tasks and pipelines are not shared, and server-initiated messages (elicitation, sampling, pipeline results) reach only the replica holding the client's SSE stream. Configure one of:
+  {{- fail (printf `%s needs a cluster coordination backend — N replicas without one run as N independent gateways: sessions, tasks and suspended requests are not shared, and notifications (list changes, task status, resource updates) reach only the subscriptions/listen streams of the replica that raised them. Configure one of:
   --set nats.enabled=true                                 # bundled NATS
   --set redis.enabled=true                                # bundled Redis
   --set externalNats.enabled=true,externalNats.url=...    # external NATS (tls://)
